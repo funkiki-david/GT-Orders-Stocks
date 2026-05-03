@@ -5,7 +5,7 @@ import { env } from "../config/env.js";
 import type { AppRole } from "../shared/roles.js";
 
 const defaultUsers: Array<{ email: string; name: string; role: AppRole }> = [
-  { email: "admin@gt.local", name: "Admin User", role: "ADMIN" },
+  { email: "admin@gt.usa", name: "Administrator", role: "ADMIN" },
   { email: "manager@gt.local", name: "Manager User", role: "MANAGER" },
   { email: "warehouse@gt.local", name: "Warehouse User", role: "WAREHOUSE" },
 ];
