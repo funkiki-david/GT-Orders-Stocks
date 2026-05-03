@@ -53,9 +53,9 @@ export function AppShell() {
       {
         label: "Inventory",
         links: [
-          { to: "/inventory/stock-overview", label: "Stock Overview" },
-          { to: "/inventory/actions", label: "Inventory Actions" },
-          { to: "/inventory/pallet-locations", label: "Pallet Locations" },
+          { to: "/inventory/stock-overview", label: "Find Stock" },
+          { to: "/inventory/actions", label: "Move / Adjust Stock" },
+          { to: "/inventory/pallet-locations", label: "Check Pallet" },
         ],
       },
       ...(session.user.role === "ADMIN" || session.user.role === "MANAGER"

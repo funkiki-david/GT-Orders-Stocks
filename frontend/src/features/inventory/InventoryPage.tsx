@@ -133,6 +133,7 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
   const [movementPage, setMovementPage] = useState(1);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState("");
   const [selectedPalletId, setSelectedPalletId] = useState("");
+  const [palletSearch, setPalletSearch] = useState("");
   const [isPalletModalOpen, setIsPalletModalOpen] = useState(false);
   const [editingPalletId, setEditingPalletId] = useState("");
   const movementPageSize = 12;
@@ -469,8 +470,10 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
       await queryClient.invalidateQueries({ queryKey: ["inventory-dashboard"] });
       await queryClient.invalidateQueries({ queryKey: ["low-stock"] });
       await queryClient.invalidateQueries({ queryKey: ["confirmed-orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["ship-order-detail"] });
       await queryClient.invalidateQueries({ queryKey: ["inventory-pallet-stock"] });
       await queryClient.invalidateQueries({ queryKey: ["sku-location-balances"] });
+      await queryClient.invalidateQueries({ queryKey: ["action-sku-location-balances"] });
     },
     onError: (mutationError) => {
       setError(mutationError instanceof Error ? mutationError.message : "Could not create movement");
@@ -520,7 +523,7 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
   }, [selectedWarehouseId, warehousesQuery.data]);
 
   useEffect(() => {
-    const pallets = palletLocationsQuery.data?.items ?? [];
+    const pallets = (palletLocationsQuery.data?.items ?? []).filter((pallet) => pallet.warehouseId === selectedWarehouseId);
     if (!pallets.length) {
       setSelectedPalletId("");
       return;
@@ -529,7 +532,7 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
     if (!selectedPalletId || !pallets.some((pallet) => pallet.id === selectedPalletId)) {
       setSelectedPalletId(pallets[0].id);
     }
-  }, [palletLocationsQuery.data, selectedPalletId]);
+  }, [palletLocationsQuery.data, selectedPalletId, selectedWarehouseId]);
 
   useEffect(() => {
     setSkuPage(1);
@@ -660,6 +663,18 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
   const movementToWarehouse = warehouses.find((warehouse) => warehouse.id === movementForm.toWarehouseId);
   const allPalletLocations = palletLocationsQuery.data?.items ?? [];
   const palletLocations = allPalletLocations.filter((pallet) => pallet.warehouseId === selectedWarehouseId);
+  const palletSearchTerm = palletSearch.trim().toLowerCase();
+  const visiblePalletLocations = palletSearchTerm
+    ? palletLocations.filter((pallet) =>
+        [pallet.code, pallet.label, pallet.zone, pallet.notes]
+          .filter(Boolean)
+          .some((value) => value!.toLowerCase().includes(palletSearchTerm)),
+      )
+    : palletLocations;
+  const selectedPallet = allPalletLocations.find((pallet) => pallet.id === selectedPalletId);
+  const selectedPalletItems = palletStockQuery.data?.items ?? [];
+  const selectedPalletTotalQoh = selectedPalletItems.reduce((total, item) => total + item.quantityOnHand, 0);
+  const selectedPalletTotalAvailable = selectedPalletItems.reduce((total, item) => total + item.available, 0);
   const movementWarehousePallets = allPalletLocations.filter((pallet) => pallet.warehouseId === movementForm.warehouseId);
   const movementFromPallets = allPalletLocations.filter((pallet) => pallet.warehouseId === movementForm.fromWarehouseId);
   const movementToPallets = allPalletLocations.filter((pallet) => pallet.warehouseId === movementForm.toWarehouseId);
@@ -680,9 +695,37 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
       Boolean(balance.palletLocationId) &&
       balance.available > 0,
   );
+  const selectedPickPalletBalance = pickablePalletBalances.find(
+    (balance) => balance.palletLocationId === movementForm.palletLocationId,
+  );
   const warehouseLevelActionBalance = actionSkuBalances.find(
     (balance) => balance.warehouseId === movementForm.warehouseId && !balance.palletLocationId,
   );
+  const movementQuantity = Number(movementForm.quantity);
+  const isShipOutMissingRequiredLink =
+    movementForm.movementType === "OUTBOUND" &&
+    (!movementForm.referenceId ||
+      !movementForm.skuId ||
+      !movementForm.warehouseId ||
+      (Boolean(movementWarehouse?.isPalletTracked) && !movementForm.palletLocationId));
+  const isShipOutQuantityOverReservation =
+    movementForm.movementType === "OUTBOUND" &&
+    Boolean(selectedShipReservation) &&
+    movementQuantity > selectedShipReservation!.quantityReserved;
+  const isShipOutQuantityOverPallet =
+    movementForm.movementType === "OUTBOUND" &&
+    Boolean(selectedPickPalletBalance) &&
+    movementQuantity > selectedPickPalletBalance!.available;
+  const isShipOutQuantityOverWarehouse =
+    movementForm.movementType === "OUTBOUND" &&
+    Boolean(movementWarehouse && !movementWarehouse.isPalletTracked) &&
+    Boolean(warehouseLevelActionBalance) &&
+    movementQuantity > warehouseLevelActionBalance!.available;
+  const isMovementBlocked =
+    isShipOutMissingRequiredLink ||
+    isShipOutQuantityOverReservation ||
+    isShipOutQuantityOverPallet ||
+    isShipOutQuantityOverWarehouse;
 
   useEffect(() => {
     if (movementForm.movementType !== "OUTBOUND" || !selectedShipOrder) {
@@ -727,31 +770,31 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
         <div>
           <h2 className="text-2xl font-semibold">
             {isProductsMode
-              ? "Stock Overview"
+              ? "Find Stock"
               : isActionsMode
-                ? "Inventory Actions"
+                ? "Move / Adjust Stock"
                 : isActivityMode
                   ? "Activity Log"
                   : isPalletsMode
-                    ? "Pallet Locations"
+                    ? "Check Pallet"
                     : "Low Stock"}
           </h2>
           <p className="text-sm text-neutral-500">
             {isProductsMode
-              ? "Review SKU stock, availability, reservations, and where each item is physically stored."
+              ? "Search SKU stock, availability, reservations, and where each item is physically stored."
               : isActionsMode
-                ? "Receive stock, correct counts, transfer locations, and ship out inventory through controlled movement records."
+                ? "Add inventory, ship out, transfer warehouse or pallet locations, and correct physical counts."
                 : isActivityMode
                   ? "Trace inventory changes across SKU, warehouse, pallet, order reference, user, and movement type."
-                  : isPalletsMode
-                    ? "Inspect pallet locations as stock containers and see which SKUs and quantities sit inside each location."
+                : isPalletsMode
+                    ? "Check pallet locations as stock containers and see which SKUs and quantities sit inside each location."
                     : "Monitor replenishment risk, prioritize shortages, and jump from low stock into stock investigation."}
           </p>
         </div>
         {!isActivityMode ? (
           <div className="flex flex-wrap gap-2">
             <WorkflowNavLink active={isProductsMode} label="1. Find Stock" to="/inventory/stock-overview" />
-            <WorkflowNavLink active={isActionsMode} label="2. Do Action" to="/inventory/actions" />
+            <WorkflowNavLink active={isActionsMode} label="2. Move / Adjust Stock" to="/inventory/actions" />
             <WorkflowNavLink active={isPalletsMode} label="3. Check Pallet" to="/inventory/pallet-locations" />
           </div>
         ) : null}
@@ -1005,10 +1048,15 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
                   </span>
                   <input
                     className="w-full rounded-md border border-neutral-300 px-3 py-2"
+                    max={movementForm.movementType === "OUTBOUND" ? selectedShipReservation?.quantityReserved : undefined}
+                    min={movementForm.movementType === "OUTBOUND" ? 1 : undefined}
                     onChange={(event) => setMovementForm((current) => ({ ...current, quantity: event.target.value }))}
                     type="number"
                     value={movementForm.quantity}
                   />
+                  {isShipOutQuantityOverReservation ? (
+                    <span className="text-xs text-red-700">Quantity cannot exceed the reserved amount for this sales order.</span>
+                  ) : null}
                 </label>
                 <InputField label="Reason" onChange={(value) => setMovementForm((current) => ({ ...current, reason: value }))} value={movementForm.reason} />
                 <label className="space-y-1">
@@ -1179,19 +1227,30 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
                 {movementForm.movementType === "OUTBOUND" && movementForm.skuId && !pickablePalletBalances.length ? (
                   <span className="text-xs text-amber-700">No pallet currently has available stock for this SKU in this warehouse.</span>
                 ) : null}
+                {movementForm.movementType === "OUTBOUND" && selectedPickPalletBalance ? (
+                  <span className="text-xs text-neutral-500">
+                    Available on selected pallet: {selectedPickPalletBalance.available}
+                  </span>
+                ) : null}
+                {isShipOutQuantityOverPallet ? (
+                  <span className="text-xs text-red-700">Quantity cannot exceed the selected pallet availability.</span>
+                ) : null}
               </label>
             ) : null}
 
             {movementForm.movementType === "OUTBOUND" && movementWarehouse && !movementWarehouse.isPalletTracked ? (
               <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-600">
                 Warehouse-level ship out. Available here: {warehouseLevelActionBalance?.available ?? 0}
+                {isShipOutQuantityOverWarehouse ? (
+                  <span className="mt-1 block text-xs text-red-700">Quantity cannot exceed warehouse-level availability.</span>
+                ) : null}
               </div>
             ) : null}
               </div>
             </div>
             <button
               className="rounded-md bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-              disabled={createMovementMutation.isPending}
+              disabled={createMovementMutation.isPending || isMovementBlocked}
               type="submit"
             >
               {createMovementMutation.isPending ? "Posting..." : "Start Stock Movement"}
@@ -1236,196 +1295,209 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
       ) : null}
 
       {isPalletsMode ? (
-        <div className="grid gap-6 xl:grid-cols-[0.95fr_1.15fr]">
-          <div className="space-y-6">
-            <div className="rounded-xl border border-neutral-200 p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h3 className="text-lg font-semibold">By Pallet</h3>
-                  <p className="mt-2 text-sm text-neutral-500">
-                    Choose a warehouse, then inspect what SKU and stock currently sit on each pallet location.
+        <div className="space-y-5">
+          <div className="border-b border-neutral-200 pb-4">
+            <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <label className="space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Warehouse</span>
+                <select
+                  className="w-full rounded-md border border-neutral-300 px-3 py-2"
+                  onChange={(event) => {
+                    setSelectedWarehouseId(event.target.value);
+                    setPalletSearch("");
+                  }}
+                  value={selectedWarehouseId}
+                >
+                  <option value="">Select warehouse</option>
+                  {warehouses.map((warehouse) => (
+                    <option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Pallet Code</span>
+                <input
+                  className="w-full rounded-md border border-neutral-300 px-3 py-2"
+                  onChange={(event) => setPalletSearch(event.target.value)}
+                  placeholder="Scan or type pallet code"
+                  value={palletSearch}
+                />
+              </label>
+              {canCreateMovements && selectedWarehouse?.isPalletTracked ? (
+                <button
+                  className="rounded-full bg-brand-primary px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
+                  onClick={openNewPalletModal}
+                  type="button"
+                >
+                  Add Pallet
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {!selectedWarehouse?.isPalletTracked ? (
+            <p className="text-sm text-neutral-600">
+              {selectedWarehouse
+                ? `${selectedWarehouse.name} is warehouse-level only, so pallet checking is not used there.`
+                : "Choose a warehouse to check pallet locations."}
+            </p>
+          ) : (
+            <div className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+              <div className="rounded-xl border border-neutral-200 bg-white">
+                <div className="border-b border-neutral-200 px-5 py-4">
+                  <h3 className="text-lg font-semibold">Select Pallet Location</h3>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    First choose a pallet location. The right side will show the stock inside it and the actions you can take.
                   </p>
                 </div>
-                <div className="flex min-w-[220px] flex-col gap-3">
+                <div className="space-y-4 px-5 py-4">
                   <label className="space-y-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Warehouse</span>
+                    <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Pallet Location</span>
                     <select
                       className="w-full rounded-md border border-neutral-300 px-3 py-2"
-                      onChange={(event) => setSelectedWarehouseId(event.target.value)}
-                      value={selectedWarehouseId}
+                      onChange={(event) => setSelectedPalletId(event.target.value)}
+                      value={selectedPalletId}
                     >
-                      <option value="">Select warehouse</option>
-                      {warehouses.map((warehouse) => (
-                        <option key={warehouse.id} value={warehouse.id}>
-                          {warehouse.name}
+                      <option value="">Select pallet location</option>
+                      {visiblePalletLocations.map((pallet) => (
+                        <option key={pallet.id} value={pallet.id}>
+                          {pallet.code} · {pallet.zone ?? pallet.label}
+                          {pallet.isActive ? "" : " · Inactive"}
                         </option>
                       ))}
                     </select>
                   </label>
-                  {canCreateMovements && selectedWarehouse?.isPalletTracked ? (
-                    <button
-                      className="rounded-md bg-brand-primary px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
-                      onClick={openNewPalletModal}
-                      type="button"
-                    >
-                      Add Pallet Location
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-              <div className="mt-4 rounded-xl border border-dashed border-neutral-300 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">
-                {selectedWarehouse?.isPalletTracked
-                  ? "This warehouse tracks pallet locations. Pick a pallet below to review its live contents."
-                  : "This warehouse is warehouse-level only for now, so pallet detail is intentionally hidden."}
-              </div>
-              {selectedWarehouse?.isPalletTracked ? (
-                <div className="mt-4 space-y-3">
-                  {palletLocations.map((pallet) => (
-                    <div
-                      key={pallet.id}
-                      className={[
-                        "rounded-xl border px-4 py-3 transition-colors",
-                        selectedPalletId === pallet.id
-                          ? "border-green-200 bg-green-50 text-green-900"
-                          : "border-neutral-200 bg-white hover:bg-neutral-50",
-                      ].join(" ")}
-                    >
-                      <div className="flex items-center justify-between gap-4">
-                        <button className="flex-1 text-left" onClick={() => setSelectedPalletId(pallet.id)} type="button">
-                          <p className="font-medium">{pallet.code}</p>
-                          <p className="mt-1 text-sm text-neutral-500">
-                            {pallet.zone ?? pallet.label}
-                            {pallet.isActive ? "" : " · Inactive"}
-                          </p>
+                  {selectedPallet ? (
+                    <div className="flex flex-wrap items-center gap-3 text-sm text-neutral-600">
+                      <span>
+                        Selected: <span className="font-semibold text-neutral-900">{selectedPallet.code}</span>
+                      </span>
+                      <span>{selectedPallet.zone ?? selectedPallet.label}</span>
+                      <span>{selectedPallet.isActive ? "Active" : "Inactive"}</span>
+                      {canCreateMovements ? (
+                        <button
+                          className="rounded-full border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                          onClick={() => openEditPalletModal(selectedPallet)}
+                          type="button"
+                        >
+                          Edit Pallet
                         </button>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs uppercase tracking-[0.16em] text-neutral-400">Open</span>
-                          {canCreateMovements ? (
-                            <button
-                              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                              onClick={() => openEditPalletModal(pallet)}
-                              type="button"
-                            >
-                              Edit
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {!palletLocations.length ? (
-                    <div className="rounded-xl border border-dashed border-neutral-300 px-4 py-6 text-sm text-neutral-500">
-                      No pallet locations are configured yet for this warehouse.
+                      ) : null}
                     </div>
                   ) : null}
+                  {!visiblePalletLocations.length ? (
+                    <p className="text-sm text-neutral-500">
+                      {palletLocations.length
+                        ? "No pallet matches this search."
+                        : "No pallet locations are configured yet for this warehouse."}
+                    </p>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-
-            <div className="rounded-xl border border-neutral-200 p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold">By SKU</h3>
-                  <p className="mt-2 text-sm text-neutral-500">
-                    Use the currently selected product to review how its stock is distributed by warehouse and pallet.
-                  </p>
-                </div>
-                <Link
-                  className="rounded-md border border-neutral-300 px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50"
-                  to="/inventory/stock-overview"
-                >
-                  Open Stock Overview
-                </Link>
               </div>
-              <div className="mt-4 rounded-xl border border-neutral-200 bg-white">
-                <div className="divide-y divide-neutral-200">
-                  {skuLocationBalancesQuery.data?.items.map((balance) => (
-                    <div key={balance.id} className="grid gap-3 px-5 py-4 md:grid-cols-[1.3fr_repeat(3,minmax(0,1fr))] md:items-center">
-                      <div>
-                        <p className="font-medium text-neutral-800">{balance.warehouseName}</p>
-                        <p className="mt-1 text-sm text-neutral-500">
-                          {balance.palletCode ? `Pallet ${balance.palletCode}` : "Warehouse-only stock"}
+
+              <div className="rounded-xl border border-neutral-200 bg-white">
+                <div className="border-b border-neutral-200 px-5 py-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold">Selected Pallet</h3>
+                      <p className="mt-1 text-sm text-neutral-500">
+                        Confirm the stock sitting in this pallet location.
+                      </p>
+                    </div>
+                    {selectedPallet ? (
+                      <div className="md:text-right">
+                        <p className="text-sm font-semibold text-neutral-900">{selectedPallet.code}</p>
+                        <p className="mt-2 text-xs text-neutral-500">
+                          {selectedPallet.isActive ? "Active" : "Inactive"}
+                          {selectedPallet.zone ? ` · ${selectedPallet.zone}` : ""}
                         </p>
                       </div>
-                      <MiniMetric label="QOH" value={String(balance.quantityOnHand)} />
-                      <MiniMetric label="Reserved" value={String(balance.quantityReserved)} />
-                      <MiniMetric label="Available" value={String(balance.available)} />
+                    ) : null}
+                  </div>
+
+                  {selectedPallet ? (
+                    <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-neutral-700">
+                      <InlineStockStat label="SKU Lines" value={String(selectedPalletItems.length)} />
+                      <InlineStockStat label="QOH" value={String(selectedPalletTotalQoh)} />
+                      <InlineStockStat label="Available" value={String(selectedPalletTotalAvailable)} />
                     </div>
-                  ))}
-                  {!skuLocationBalancesQuery.data?.items.length ? (
-                    <div className="px-5 py-6 text-sm text-neutral-500">
-                      Select a SKU in Stock Overview to review location balances here.
+                  ) : null}
+
+                  {selectedPallet ? (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      <button
+                        className="rounded-full bg-brand-primary px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-green-700"
+                        onClick={() =>
+                          openInventoryAction("INBOUND", {
+                            warehouseId: selectedPallet.warehouseId,
+                            palletLocationId: selectedPallet.id,
+                          })
+                        }
+                        type="button"
+                      >
+                        Add Inventory
+                      </button>
+                      <button
+                        className="rounded-full border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                        onClick={() =>
+                          openInventoryAction("ADJUSTMENT", {
+                            warehouseId: selectedPallet.warehouseId,
+                            palletLocationId: selectedPallet.id,
+                          })
+                        }
+                        type="button"
+                      >
+                        Adjust Quantity
+                      </button>
+                      <button
+                        className="rounded-full border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                        onClick={() =>
+                          openInventoryAction("TRANSFER", {
+                            fromWarehouseId: selectedPallet.warehouseId,
+                          })
+                        }
+                        type="button"
+                      >
+                        Warehouse Transfer
+                      </button>
+                      <button
+                        className="rounded-full border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                        onClick={() =>
+                          openInventoryAction("TRANSFER", {
+                            fromWarehouseId: selectedPallet.warehouseId,
+                            fromPalletLocationId: selectedPallet.id,
+                          })
+                        }
+                        type="button"
+                      >
+                        Pallet Transfer
+                      </button>
+                      <button
+                        className="rounded-full border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                        onClick={() =>
+                          openInventoryAction("OUTBOUND", {
+                            warehouseId: selectedPallet.warehouseId,
+                            palletLocationId: selectedPallet.id,
+                          })
+                        }
+                        type="button"
+                      >
+                        Ship Out
+                      </button>
+                      <Link
+                        className="rounded-full border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                        to="/inventory/stock-overview"
+                      >
+                        Find SKU Instead
+                      </Link>
                     </div>
                   ) : null}
                 </div>
-              </div>
-            </div>
-          </div>
 
-          <div className="space-y-6">
-            <div className="rounded-xl border border-neutral-200 p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold">Pallet Stock</h3>
-                  <p className="mt-2 text-sm text-neutral-500">
-                    Review the live content of the selected pallet location.
-                  </p>
-                </div>
-                {palletStockQuery.data?.palletLocation ? (
-                  <div className="text-right">
-                    <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
-                      {palletStockQuery.data.palletLocation.code}
-                    </span>
-                    <p className="mt-2 text-xs text-neutral-500">
-                      {palletStockQuery.data.palletLocation.isActive ? "Active" : "Inactive"}
-                      {palletStockQuery.data.palletLocation.zone ? ` · ${palletStockQuery.data.palletLocation.zone}` : ""}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-              {palletStockQuery.data?.palletLocation ? (
-                <div className="mt-4 flex flex-wrap gap-3">
-                  <button
-                    className="rounded-md bg-brand-primary px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
-                    onClick={() =>
-                      openInventoryAction("INBOUND", {
-                        warehouseId: palletStockQuery.data.palletLocation.warehouseId,
-                        palletLocationId: palletStockQuery.data.palletLocation.id,
-                      })
-                    }
-                    type="button"
-                  >
-                    Add SKU to Pallet
-                  </button>
-                  <button
-                    className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-100"
-                    onClick={() =>
-                      openInventoryAction("ADJUSTMENT", {
-                        warehouseId: palletStockQuery.data.palletLocation.warehouseId,
-                        palletLocationId: palletStockQuery.data.palletLocation.id,
-                      })
-                    }
-                    type="button"
-                  >
-                    Adjust Count
-                  </button>
-                  <button
-                    className="rounded-md border border-sky-200 bg-sky-50 px-4 py-2 text-sm font-medium text-sky-800 hover:bg-sky-100"
-                    onClick={() =>
-                      openInventoryAction("TRANSFER", {
-                        fromWarehouseId: palletStockQuery.data.palletLocation.warehouseId,
-                        fromPalletLocationId: palletStockQuery.data.palletLocation.id,
-                      })
-                    }
-                    type="button"
-                  >
-                    Move Stock Out
-                  </button>
-                </div>
-              ) : null}
-              <div className="mt-4 rounded-xl border border-neutral-200 bg-white">
                 <div className="divide-y divide-neutral-200">
-                  {palletStockQuery.data?.items.map((item) => (
+                  {selectedPalletItems.map((item) => (
                     <div key={item.id} className="grid gap-3 px-5 py-4 md:grid-cols-[1.5fr_repeat(3,minmax(0,1fr))] md:items-center">
                       <div>
                         <p className="font-medium text-neutral-800">
@@ -1434,26 +1506,23 @@ export function InventoryPage({ mode = "products" }: InventoryPageProps) {
                         <p className="mt-1 text-sm text-neutral-500">
                           {item.category} · {item.unit}
                         </p>
-                        <p className="mt-1 text-xs uppercase tracking-wide text-neutral-400">
-                          Last updated {new Date(item.updatedAt).toLocaleString()}
-                        </p>
                       </div>
-                      <MiniMetric label="QOH" value={String(item.quantityOnHand)} />
-                      <MiniMetric label="Reserved" value={String(item.quantityReserved)} />
-                      <MiniMetric label="Available" value={String(item.available)} />
+                      <InlineStockStat label="QOH" value={String(item.quantityOnHand)} />
+                      <InlineStockStat label="Reserved" value={String(item.quantityReserved)} />
+                      <InlineStockStat label="Available" value={String(item.available)} />
                     </div>
                   ))}
-                  {!palletStockQuery.data?.items.length ? (
-                    <div className="px-5 py-6 text-sm text-neutral-500">
+                  {!selectedPalletItems.length ? (
+                    <div className="px-5 py-8 text-sm text-neutral-500">
                       {selectedPalletId
                         ? "No stock is currently assigned to this pallet."
-                        : "Choose a pallet location on the left to inspect its contents."}
+                        : "Choose a pallet location to inspect its contents."}
                     </div>
                   ) : null}
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       ) : null}
 
@@ -1786,9 +1855,9 @@ function WorkflowNavLink({ active, label, to }: { active: boolean; label: string
   return (
     <Link
       className={[
-        "rounded-md border px-4 py-2 text-sm font-medium transition-colors",
+        "rounded-full border px-4 py-2 text-sm font-semibold transition-colors",
         active
-          ? "border-green-200 bg-green-50 text-green-800"
+          ? "border-green-600 bg-green-600 text-white"
           : "border-neutral-300 text-neutral-700 hover:bg-neutral-50",
       ].join(" ")}
       to={to}
