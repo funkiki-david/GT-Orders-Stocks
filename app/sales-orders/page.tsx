@@ -7,44 +7,73 @@ import { Button } from '@/components/Button';
 import { DataTable } from '@/components/DataTable';
 import { Drawer } from '@/components/Drawer';
 import { FormField } from '@/components/FormField';
-import { MetricCard } from '@/components/MetricCard';
 import { PageHeader } from '@/components/PageHeader';
 import { SalesOrderDetail } from '@/components/SalesOrderDetail';
 import { SearchBar } from '@/components/SearchBar';
 import { formatCurrency } from '@/lib/format';
 import type { SalesOrder, SalesOrderLineItem } from '@/lib/types';
 
+type SortKey = 'date-desc' | 'date-asc' | 'sales-order-asc' | 'sales-order-desc' | 'customer-asc' | 'customer-desc' | 'amount-desc' | 'amount-asc';
+
+function sortOrders(orders: SalesOrder[], sortKey: SortKey) {
+  const sorted = [...orders];
+
+  sorted.sort((a, b) => {
+    switch (sortKey) {
+      case 'date-asc':
+        return a.date.localeCompare(b.date);
+      case 'date-desc':
+        return b.date.localeCompare(a.date);
+      case 'sales-order-asc':
+        return a.invoice.localeCompare(b.invoice);
+      case 'sales-order-desc':
+        return b.invoice.localeCompare(a.invoice);
+      case 'customer-asc':
+        return a.customer.localeCompare(b.customer);
+      case 'customer-desc':
+        return b.customer.localeCompare(a.customer);
+      case 'amount-asc':
+        return Number(a.subtotal || 0) - Number(b.subtotal || 0);
+      case 'amount-desc':
+        return Number(b.subtotal || 0) - Number(a.subtotal || 0);
+      default:
+        return 0;
+    }
+  });
+
+  return sorted;
+}
+
 export default function SalesOrdersPage() {
   const [orders, setOrders] = useState<SalesOrder[]>(ordersSeed as SalesOrder[]);
   const [query, setQuery] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('date-desc');
   const [selectedInvoice, setSelectedInvoice] = useState<string>((ordersSeed as SalesOrder[])[0]?.invoice ?? '');
   const [editingLine, setEditingLine] = useState<SalesOrderLineItem | null>(null);
   const [draftLine, setDraftLine] = useState<SalesOrderLineItem | null>(null);
 
   const filteredOrders = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
+    const matchedOrders = normalizedQuery
+      ? orders.filter((order) =>
+          [
+            order.invoice,
+            order.customer,
+            order.po,
+            order.payment,
+            order.items.map((item) => `${item.sku} ${item.description}`).join(' '),
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(normalizedQuery),
+        )
+      : orders;
 
-    if (!normalizedQuery) {
-      return orders;
-    }
-
-    return orders.filter((order) =>
-      [
-        order.invoice,
-        order.customer,
-        order.po,
-        order.payment,
-        order.items.map((item) => `${item.sku} ${item.description}`).join(' '),
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(normalizedQuery),
-    );
-  }, [orders, query]);
+    return sortOrders(matchedOrders, sortKey);
+  }, [orders, query, sortKey]);
 
   const selectedOrder = filteredOrders.find((order) => order.invoice === selectedInvoice) ?? filteredOrders[0];
   const salesTotal = filteredOrders.reduce((sum, order) => sum + Number(order.subtotal || 0), 0);
-  const lineCount = filteredOrders.reduce((sum, order) => sum + order.items.length, 0);
   const customerCount = new Set(filteredOrders.map((order) => order.customer)).size;
 
   function openLineDrawer(line: SalesOrderLineItem) {
@@ -88,7 +117,7 @@ export default function SalesOrdersPage() {
   function handleSearch(value: string) {
     setQuery(value);
     const normalizedQuery = value.trim().toLowerCase();
-    const firstMatch = orders.find((order) =>
+    const firstMatch = sortOrders(orders, sortKey).find((order) =>
       [
         order.invoice,
         order.customer,
@@ -106,40 +135,79 @@ export default function SalesOrdersPage() {
     }
   }
 
+  function handleSortChange(value: SortKey) {
+    setSortKey(value);
+    const sorted = sortOrders(filteredOrders, value);
+
+    if (sorted.length > 0) {
+      setSelectedInvoice(sorted[0].invoice);
+    }
+  }
+
   return (
     <AppShell>
-      <PageHeader title="Sales Order" instruction="Search an order, select it from the list, then review line items below." />
+      <PageHeader title="Sales Order" instruction="Step 1: select a Sales Order from the left. Step 2: review or edit details on the right." />
 
       <div className="mb-4 rounded-xl border border-border bg-card p-3 text-xs text-secondaryText">
-        Sales Orders use local seed data grouped by invoice. Saving line edits updates React state only and does not deduct inventory.
+        Sales Orders use local seed data only. Saving line edits updates React state and does not deduct inventory.
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-        <MetricCard label="Orders" value={filteredOrders.length} />
-        <MetricCard label="Line Items" value={lineCount} />
-        <MetricCard label="Customers" value={customerCount} />
-        <MetricCard label="Sales Total" value={formatCurrency(salesTotal)} />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-3">
+        <div className="flex flex-wrap gap-4 text-sm text-primaryText">
+          <span><strong>{filteredOrders.length}</strong> Sales Orders</span>
+          <span><strong>{customerCount}</strong> Customers</span>
+          <span><strong>{formatCurrency(salesTotal)}</strong> Total Amount</span>
+        </div>
+        <div className="text-xs text-helperText">Compact summary</div>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <SearchBar value={query} onChange={handleSearch} placeholder="Search Invoice / Customer / PO / SKU / Description" />
-        <Button variant="primary" onClick={() => undefined}>Create Sales Order</Button>
+        <SearchBar value={query} onChange={handleSearch} placeholder="Search Sales Order / Customer / PO / SKU / Description" />
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs font-medium text-secondaryText" htmlFor="order-sort">Sort by</label>
+          <select
+            id="order-sort"
+            value={sortKey}
+            onChange={(event) => handleSortChange(event.target.value as SortKey)}
+            className="h-8 rounded-full border border-border bg-white px-3 text-sm text-primaryText"
+          >
+            <option value="date-desc">Date: Newest first</option>
+            <option value="date-asc">Date: Oldest first</option>
+            <option value="sales-order-asc">Sales Order #: A to Z</option>
+            <option value="sales-order-desc">Sales Order #: Z to A</option>
+            <option value="customer-asc">Customer: A to Z</option>
+            <option value="customer-desc">Customer: Z to A</option>
+            <option value="amount-desc">Amount: High to Low</option>
+            <option value="amount-asc">Amount: Low to High</option>
+          </select>
+          <Button variant="primary" onClick={() => undefined}>Create Sales Order</Button>
+        </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[420px_1fr]">
-        <DataTable
-          rows={filteredOrders}
-          rowKey={(order) => order.invoice}
-          activeRowKey={selectedOrder?.invoice}
-          onRowClick={(order) => setSelectedInvoice(order.invoice)}
-          columns={[
-            { key: 'invoice', header: 'Invoice #', render: (order) => order.invoice },
-            { key: 'customer', header: 'Customer', render: (order) => order.customer },
-            { key: 'total', header: 'Total', align: 'right', render: (order) => formatCurrency(order.subtotal) },
-          ]}
-        />
+      <div className="grid gap-4 lg:grid-cols-[460px_1fr]">
+        <section className="rounded-xl border border-border bg-card p-3">
+          <div className="mb-3 rounded-xl bg-warningBg p-3 text-sm text-warningText">
+            <strong>Step 1:</strong> Click a Sales Order below. The selected row turns bold and the detail opens on the right.
+          </div>
+          <DataTable
+            rows={filteredOrders}
+            rowKey={(order) => order.invoice}
+            activeRowKey={selectedOrder?.invoice}
+            onRowClick={(order) => setSelectedInvoice(order.invoice)}
+            columns={[
+              { key: 'invoice', header: 'Sales Order #', render: (order) => order.invoice },
+              { key: 'date', header: 'Date', render: (order) => order.date },
+              { key: 'customer', header: 'Customer', render: (order) => order.customer },
+            ]}
+          />
+        </section>
 
-        <SalesOrderDetail order={selectedOrder} onEditLine={openLineDrawer} />
+        <section className="rounded-xl border-2 border-primaryButton/30 bg-white p-3">
+          <div className="mb-3 rounded-xl bg-successBg p-3 text-sm text-successText">
+            <strong>Step 2:</strong> Review the selected Sales Order here. Current selection: <strong>{selectedOrder?.invoice ?? 'None'}</strong>
+          </div>
+          <SalesOrderDetail order={selectedOrder} onEditLine={openLineDrawer} />
+        </section>
       </div>
 
       <Drawer
