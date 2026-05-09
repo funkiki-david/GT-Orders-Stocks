@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import ordersSeed from '@/data/orders-seed.json';
 import { AppShell } from '@/components/AppShell';
 import { Button } from '@/components/Button';
-import { DataTable } from '@/components/DataTable';
 import { Drawer } from '@/components/Drawer';
 import { FormField } from '@/components/FormField';
 import { PageHeader } from '@/components/PageHeader';
@@ -13,7 +12,7 @@ import { SearchBar } from '@/components/SearchBar';
 import { formatCurrency } from '@/lib/format';
 import type { SalesOrder, SalesOrderLineItem } from '@/lib/types';
 
-type SortKey = 'date-desc' | 'date-asc' | 'sales-order-asc' | 'sales-order-desc' | 'customer-asc' | 'customer-desc' | 'amount-desc' | 'amount-asc';
+type SortKey = 'date-desc' | 'date-asc' | 'sales-order-asc' | 'sales-order-desc' | 'customer-asc' | 'customer-desc';
 
 function sortOrders(orders: SalesOrder[], sortKey: SortKey) {
   const sorted = [...orders];
@@ -32,10 +31,6 @@ function sortOrders(orders: SalesOrder[], sortKey: SortKey) {
         return a.customer.localeCompare(b.customer);
       case 'customer-desc':
         return b.customer.localeCompare(a.customer);
-      case 'amount-asc':
-        return Number(a.subtotal || 0) - Number(b.subtotal || 0);
-      case 'amount-desc':
-        return Number(b.subtotal || 0) - Number(a.subtotal || 0);
       default:
         return 0;
     }
@@ -148,40 +143,21 @@ export default function SalesOrdersPage() {
     <AppShell>
       <PageHeader title="Sales Order" instruction="Step 1: select a Sales Order from the left. Step 2: review or edit details on the right." />
 
-      <div className="mb-4 rounded-xl border border-border bg-card p-3 text-xs text-secondaryText">
+      <div className="mb-3 rounded-xl border border-border bg-card p-2.5 text-xs text-secondaryText">
         Sales Orders use local seed data only. Saving line edits updates React state and does not deduct inventory.
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-3">
-        <div className="flex flex-wrap gap-4 text-sm text-primaryText">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2">
+        <div className="flex flex-wrap gap-4 text-[13px] text-primaryText">
           <span><strong>{filteredOrders.length}</strong> Sales Orders</span>
           <span><strong>{customerCount}</strong> Customers</span>
           <span><strong>{formatCurrency(salesTotal)}</strong> Total Amount</span>
         </div>
-        <div className="text-xs text-helperText">Compact summary</div>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <SearchBar value={query} onChange={handleSearch} placeholder="Search Sales Order / Customer / PO / SKU / Description" />
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="text-xs font-medium text-secondaryText" htmlFor="order-sort">Sort by</label>
-          <select
-            id="order-sort"
-            value={sortKey}
-            onChange={(event) => handleSortChange(event.target.value as SortKey)}
-            className="h-8 rounded-full border border-border bg-white px-3 text-sm text-primaryText"
-          >
-            <option value="date-desc">Date: Newest first</option>
-            <option value="date-asc">Date: Oldest first</option>
-            <option value="sales-order-asc">Sales Order #: A to Z</option>
-            <option value="sales-order-desc">Sales Order #: Z to A</option>
-            <option value="customer-asc">Customer: A to Z</option>
-            <option value="customer-desc">Customer: Z to A</option>
-            <option value="amount-desc">Amount: High to Low</option>
-            <option value="amount-asc">Amount: Low to High</option>
-          </select>
-          <Button variant="primary" onClick={() => undefined}>Create Sales Order</Button>
-        </div>
+        <Button variant="primary" onClick={() => undefined}>Create Sales Order</Button>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[460px_1fr]">
@@ -189,17 +165,55 @@ export default function SalesOrdersPage() {
           <div className="mb-3 rounded-xl bg-warningBg p-3 text-sm text-warningText">
             <strong>Step 1:</strong> Click a Sales Order below. The selected row turns bold and the detail opens on the right.
           </div>
-          <DataTable
-            rows={filteredOrders}
-            rowKey={(order) => order.invoice}
-            activeRowKey={selectedOrder?.invoice}
-            onRowClick={(order) => setSelectedInvoice(order.invoice)}
-            columns={[
-              { key: 'invoice', header: 'Sales Order #', render: (order) => order.invoice },
-              { key: 'date', header: 'Date', render: (order) => order.date },
-              { key: 'customer', header: 'Customer', render: (order) => order.customer },
-            ]}
-          />
+
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="font-title text-base font-semibold text-primaryText">Sales Order List</div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-secondaryText" htmlFor="order-sort-left">Sort</label>
+              <select
+                id="order-sort-left"
+                value={sortKey}
+                onChange={(event) => handleSortChange(event.target.value as SortKey)}
+                className="h-8 rounded-full border border-border bg-white px-3 text-[13px] text-primaryText"
+              >
+                <option value="date-desc">Date: Newest</option>
+                <option value="date-asc">Date: Oldest</option>
+                <option value="sales-order-asc">Sales Order #: A-Z</option>
+                <option value="sales-order-desc">Sales Order #: Z-A</option>
+                <option value="customer-asc">Customer: A-Z</option>
+                <option value="customer-desc">Customer: Z-A</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            <table className="w-full border-collapse text-[13px]">
+              <thead className="bg-header">
+                <tr>
+                  <th className="h-9 w-[42%] border-b border-border px-2 text-left font-semibold text-primaryText">Sales Order #</th>
+                  <th className="h-9 w-[24%] border-b border-border px-2 text-left font-semibold text-primaryText">Date</th>
+                  <th className="h-9 w-[34%] border-b border-border px-2 text-left font-semibold text-primaryText">Customer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredOrders.map((order) => {
+                  const isSelected = order.invoice === selectedOrder?.invoice;
+
+                  return (
+                    <tr
+                      key={order.invoice}
+                      onClick={() => setSelectedInvoice(order.invoice)}
+                      className={`cursor-pointer hover:bg-page ${isSelected ? 'bg-page font-semibold' : ''}`}
+                    >
+                      <td className="border-b border-border px-2 py-2 text-primaryText">{order.invoice}</td>
+                      <td className="border-b border-border px-2 py-2 text-primaryText">{order.date}</td>
+                      <td className="border-b border-border px-2 py-2 text-primaryText">{order.customer}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section className="rounded-xl border-2 border-primaryButton/30 bg-white p-3">
