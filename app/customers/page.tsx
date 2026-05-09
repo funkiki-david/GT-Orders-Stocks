@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import customersSeed from '@/data/customers-seed.json';
 import ordersSeed from '@/data/orders-seed.json';
@@ -14,22 +15,27 @@ import { SearchBar } from '@/components/SearchBar';
 import { formatCurrency } from '@/lib/format';
 import type { Customer, SalesOrder, SalesOrderLineItem } from '@/lib/types';
 
+type PaymentDraft = {
+  invoice: string;
+  payment: string;
+};
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>(customersSeed as Customer[]);
+  const [orders, setOrders] = useState<SalesOrder[]>(ordersSeed as SalesOrder[]);
   const [query, setQuery] = useState('');
   const [selectedCustomerName, setSelectedCustomerName] = useState<string>((customersSeed as Customer[])[0]?.name ?? '');
   const [selectedInvoice, setSelectedInvoice] = useState<string>('');
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [draft, setDraft] = useState<Customer | null>(null);
-
-  const orders = ordersSeed as SalesOrder[];
+  const [paymentDraft, setPaymentDraft] = useState<PaymentDraft | null>(null);
+  const [editingLine, setEditingLine] = useState<SalesOrderLineItem | null>(null);
+  const [draftLine, setDraftLine] = useState<SalesOrderLineItem | null>(null);
 
   const filteredCustomers = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
-    if (!normalizedQuery) {
-      return customers;
-    }
+    if (!normalizedQuery) return customers;
 
     return customers.filter((customer) =>
       [customer.name, customer.payment, customer.salesRep].join(' ').toLowerCase().includes(normalizedQuery),
@@ -40,9 +46,7 @@ export default function CustomersPage() {
     filteredCustomers.find((customer) => customer.name === selectedCustomerName) ?? filteredCustomers[0];
 
   const selectedCustomerOrders = useMemo(() => {
-    if (!selectedCustomer) {
-      return [];
-    }
+    if (!selectedCustomer) return [];
 
     return orders.filter((order) => order.customer.toLowerCase() === selectedCustomer.name.toLowerCase());
   }, [orders, selectedCustomer]);
@@ -60,12 +64,12 @@ export default function CustomersPage() {
     setSelectedInvoice(firstOrder?.invoice ?? '');
   }
 
-  function openEditDrawer(customer: Customer) {
+  function openEditCustomerDrawer(customer: Customer) {
     setEditingCustomer(customer);
     setDraft({ ...customer });
   }
 
-  function openAddDrawer() {
+  function openAddCustomerDrawer() {
     const blankCustomer: Customer = {
       name: '',
       orders: 0,
@@ -78,7 +82,7 @@ export default function CustomersPage() {
     setDraft(blankCustomer);
   }
 
-  function saveDraft() {
+  function saveCustomerDraft() {
     if (!draft) return;
 
     if (editingCustomer) {
@@ -93,6 +97,52 @@ export default function CustomersPage() {
     setEditingCustomer(null);
   }
 
+  function openPaymentDrawer(order: SalesOrder) {
+    setPaymentDraft({ invoice: order.invoice, payment: order.payment });
+  }
+
+  function savePaymentDraft() {
+    if (!paymentDraft) return;
+
+    setOrders((current) =>
+      current.map((order) =>
+        order.invoice === paymentDraft.invoice ? { ...order, payment: paymentDraft.payment } : order,
+      ),
+    );
+    setPaymentDraft(null);
+  }
+
+  function openLineDrawer(line: SalesOrderLineItem) {
+    setEditingLine(line);
+    setDraftLine({ ...line });
+  }
+
+  function saveLineDraft() {
+    if (!draftLine || !editingLine || !selectedOrder) return;
+
+    const updatedLine: SalesOrderLineItem = {
+      ...draftLine,
+      total: Number(draftLine.qty || 0) * Number(draftLine.unitPrice || 0),
+    };
+
+    setOrders((current) =>
+      current.map((order) => {
+        if (order.invoice !== selectedOrder.invoice) return order;
+
+        const items = order.items.map((line) =>
+          line.sku === editingLine.sku && line.description === editingLine.description ? updatedLine : line,
+        );
+        const totalQty = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+        const subtotal = items.reduce((sum, item) => sum + Number(item.total || 0), 0);
+
+        return { ...order, items, totalQty, subtotal };
+      }),
+    );
+
+    setEditingLine(null);
+    setDraftLine(null);
+  }
+
   return (
     <AppShell>
       <PageHeader
@@ -101,8 +151,7 @@ export default function CustomersPage() {
       />
 
       <div className="mb-4 rounded-xl border border-border bg-card p-3 text-xs text-secondaryText">
-        QuickBooks-style customer workflow: Customer List → Customer Detail → Customer Orders → Selected Order Detail.
-        All data is local seed data in this MVP.
+        QuickBooks-style workflow: view order history inside the customer page; use View Full Order only when deeper Sales Order editing is needed.
       </div>
 
       <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
@@ -114,7 +163,7 @@ export default function CustomersPage() {
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <SearchBar value={query} onChange={setQuery} placeholder="Search Customer / Payment / Sales Rep" />
-        <Button variant="primary" onClick={openAddDrawer}>Add Customer</Button>
+        <Button variant="primary" onClick={openAddCustomerDrawer}>Add Customer</Button>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[420px_1fr]">
@@ -135,7 +184,9 @@ export default function CustomersPage() {
           orders={selectedCustomerOrders}
           selectedOrder={selectedOrder}
           onSelectOrder={(order) => setSelectedInvoice(order.invoice)}
-          onEditCustomer={openEditDrawer}
+          onEditCustomer={openEditCustomerDrawer}
+          onEditPayment={openPaymentDrawer}
+          onEditLine={openLineDrawer}
         />
       </div>
 
@@ -144,29 +195,60 @@ export default function CustomersPage() {
         helper="Customer Name is required. Save updates local React state only."
         open={Boolean(draft)}
         onClose={() => setDraft(null)}
-        onSave={saveDraft}
+        onSave={saveCustomerDraft}
       >
         {draft ? (
           <div className="grid gap-4">
             <FormField label="Customer Name *" value={draft.name} onChange={(value) => setDraft({ ...draft, name: value })} />
-            <FormField
-              label="Orders"
-              type="number"
-              value={draft.orders}
-              onChange={(value) => setDraft({ ...draft, orders: Number(value) })}
-            />
-            <FormField
-              label="Sales Total"
-              type="number"
-              value={draft.total}
-              onChange={(value) => setDraft({ ...draft, total: Number(value) })}
-            />
+            <FormField label="Orders" type="number" value={draft.orders} onChange={(value) => setDraft({ ...draft, orders: Number(value) })} />
+            <FormField label="Sales Total" type="number" value={draft.total} onChange={(value) => setDraft({ ...draft, total: Number(value) })} />
             <FormField label="Payment Info" value={draft.payment} onChange={(value) => setDraft({ ...draft, payment: value })} />
             <FormField label="Sales Rep" value={draft.salesRep} onChange={(value) => setDraft({ ...draft, salesRep: value })} />
             <FormField label="Last Order" value={draft.lastOrder} onChange={(value) => setDraft({ ...draft, lastOrder: value })} />
             <FormField label="Default Shipping Address" value="" multiline />
+          </div>
+        ) : null}
+      </Drawer>
+
+      <Drawer
+        title="Edit Payment"
+        helper="This quick edit updates the selected order payment info in local state only."
+        open={Boolean(paymentDraft)}
+        onClose={() => setPaymentDraft(null)}
+        onSave={savePaymentDraft}
+      >
+        {paymentDraft ? (
+          <div className="grid gap-4">
+            <FormField label="Invoice #" value={paymentDraft.invoice} />
+            <FormField label="Payment Info" value={paymentDraft.payment} onChange={(value) => setPaymentDraft({ ...paymentDraft, payment: value })} />
             <div className="rounded-xl bg-warningBg p-3 text-xs text-warningText">
-              Contact, phone, email, payment term, and address should become formal customer master fields in the database version.
+              Suggested values: Waiting, Paid, SQ Invoice, Consignment, or custom text.
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
+
+      <Drawer
+        title="Edit Line Item"
+        helper="Line item changes update this order only. They do not update Inventory master data."
+        open={Boolean(draftLine)}
+        onClose={() => {
+          setEditingLine(null);
+          setDraftLine(null);
+        }}
+        onSave={saveLineDraft}
+      >
+        {draftLine ? (
+          <div className="grid gap-4">
+            <FormField label="SKU Code" value={draftLine.sku} onChange={(value) => setDraftLine({ ...draftLine, sku: value })} />
+            <FormField label="Description" value={draftLine.description} onChange={(value) => setDraftLine({ ...draftLine, description: value })} multiline />
+            <FormField label="Width" value={draftLine.width} onChange={(value) => setDraftLine({ ...draftLine, width: value })} />
+            <FormField label="Length" value={draftLine.length} onChange={(value) => setDraftLine({ ...draftLine, length: value })} />
+            <FormField label="Category" value={draftLine.category} onChange={(value) => setDraftLine({ ...draftLine, category: value })} />
+            <FormField label="Qty (CTN)" type="number" value={draftLine.qty} onChange={(value) => setDraftLine({ ...draftLine, qty: Number(value) })} />
+            <FormField label="Unit Price" type="number" value={draftLine.unitPrice} onChange={(value) => setDraftLine({ ...draftLine, unitPrice: Number(value) })} />
+            <div className="rounded-xl bg-page p-3 text-sm text-primaryText">
+              Preview Total: {formatCurrency(Number(draftLine.qty || 0) * Number(draftLine.unitPrice || 0))}
             </div>
           </div>
         ) : null}
@@ -181,12 +263,16 @@ function CustomerDetailPanel({
   selectedOrder,
   onSelectOrder,
   onEditCustomer,
+  onEditPayment,
+  onEditLine,
 }: {
   customer?: Customer;
   orders: SalesOrder[];
   selectedOrder?: SalesOrder;
   onSelectOrder: (order: SalesOrder) => void;
   onEditCustomer: (customer: Customer) => void;
+  onEditPayment: (order: SalesOrder) => void;
+  onEditLine: (line: SalesOrderLineItem) => void;
 }) {
   if (!customer) {
     return (
@@ -202,7 +288,7 @@ function CustomerDetailPanel({
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-title text-base font-semibold text-primaryText">{customer.name}</h2>
-          <p className="mt-1 text-xs text-helperText">Customer profile, sales order history, and selected order details.</p>
+          <p className="mt-1 text-xs text-helperText">Customer profile, order history, and quick order actions.</p>
         </div>
         <Button onClick={() => onEditCustomer(customer)}>Edit Customer</Button>
       </div>
@@ -212,13 +298,6 @@ function CustomerDetailPanel({
         <MetricCard label="Sales Total" value={formatCurrency(customer.total)} />
         <MetricCard label="Payment Info" value={customer.payment || '—'} />
         <MetricCard label="Last Order" value={customer.lastOrder || '—'} />
-      </div>
-
-      <div className="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2">
-        <ReadOnlyField label="Customer Name" value={customer.name} />
-        <ReadOnlyField label="Sales Rep" value={customer.salesRep || '—'} />
-        <ReadOnlyField label="Payment Info" value={customer.payment || '—'} />
-        <ReadOnlyField label="Default Shipping Address" value="Not set" />
       </div>
 
       <div className="mb-4">
@@ -234,24 +313,27 @@ function CustomerDetailPanel({
             { key: 'date', header: 'Date', render: (order) => order.date },
             { key: 'po', header: 'PO #', render: (order) => order.po || '—' },
             { key: 'payment', header: 'Status', render: (order) => order.payment || '—' },
-            { key: 'qty', header: 'Qty', align: 'center', render: (order) => order.totalQty },
             { key: 'subtotal', header: 'Subtotal', align: 'right', render: (order) => formatCurrency(order.subtotal) },
           ]}
         />
       </div>
 
-      <SelectedCustomerOrderDetail order={selectedOrder} />
+      <SelectedCustomerOrderDetail order={selectedOrder} onEditPayment={onEditPayment} onEditLine={onEditLine} />
     </section>
   );
 }
 
-function SelectedCustomerOrderDetail({ order }: { order?: SalesOrder }) {
+function SelectedCustomerOrderDetail({
+  order,
+  onEditPayment,
+  onEditLine,
+}: {
+  order?: SalesOrder;
+  onEditPayment: (order: SalesOrder) => void;
+  onEditLine: (line: SalesOrderLineItem) => void;
+}) {
   if (!order) {
-    return (
-      <div className="rounded-xl border border-border bg-page p-4 text-sm text-secondaryText">
-        Select an order to view line item details.
-      </div>
-    );
+    return <div className="rounded-xl border border-border bg-page p-4 text-sm text-secondaryText">Select an order to view line item details.</div>;
   }
 
   return (
@@ -260,11 +342,14 @@ function SelectedCustomerOrderDetail({ order }: { order?: SalesOrder }) {
         <div>
           <div className="font-title text-base font-semibold text-primaryText">Selected Order Detail</div>
           <div className="mt-1 text-xs text-helperText">
-            {order.invoice} · {order.date} · PO {order.po || '—'}
+            {order.invoice} · {order.date} · PO {order.po || '—'} · Payment: {order.payment || '—'}
           </div>
         </div>
-        <div className="rounded-full bg-secondaryButton px-3 py-1.5 text-xs text-secondaryText">
-          {order.items.length} line items
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/sales-orders?invoice=${encodeURIComponent(order.invoice)}`}>
+            <Button>View Full Order</Button>
+          </Link>
+          <Button onClick={() => onEditPayment(order)}>Edit Payment</Button>
         </div>
       </div>
 
@@ -274,27 +359,12 @@ function SelectedCustomerOrderDetail({ order }: { order?: SalesOrder }) {
         columns={[
           { key: 'sku', header: 'SKU', render: (line) => line.sku },
           { key: 'description', header: 'Description', render: (line) => line.description },
-          { key: 'width', header: 'W', align: 'center', render: (line) => line.width },
-          { key: 'length', header: 'L', align: 'center', render: (line) => line.length },
-          { key: 'category', header: 'Category', render: (line) => line.category },
           { key: 'qty', header: 'Qty', align: 'center', render: (line) => line.qty },
           { key: 'unit', header: 'Unit', align: 'right', render: (line) => formatCurrency(line.unitPrice) },
           { key: 'total', header: 'Total', align: 'right', render: (line) => formatCurrency(line.total || line.qty * line.unitPrice) },
+          { key: 'action', header: 'Action', align: 'center', render: (line) => <Button size="small" onClick={() => onEditLine(line)}>Edit</Button> },
         ]}
       />
     </div>
-  );
-}
-
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[13px] font-medium text-primaryText">{label}</span>
-      <input
-        value={value}
-        readOnly
-        className="h-[34px] w-full rounded-md border border-border bg-white px-3 text-sm text-primaryText"
-      />
-    </label>
   );
 }
