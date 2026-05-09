@@ -20,8 +20,41 @@ type PaymentDraft = {
   payment: string;
 };
 
+function normalizeCustomer(customer: Customer): Customer {
+  return {
+    ...customer,
+    contactPerson: customer.contactPerson ?? '',
+    phone: customer.phone ?? '',
+    email: customer.email ?? '',
+    billingAddress: customer.billingAddress ?? '',
+    shippingAddress: customer.shippingAddress ?? '',
+    paymentTerm: customer.paymentTerm ?? '',
+    notes: customer.notes ?? '',
+  };
+}
+
+function makeBlankCustomer(): Customer {
+  return {
+    name: '',
+    orders: 0,
+    total: 0,
+    payment: '',
+    salesRep: '',
+    lastOrder: '',
+    contactPerson: '',
+    phone: '',
+    email: '',
+    billingAddress: '',
+    shippingAddress: '',
+    paymentTerm: '',
+    notes: '',
+  };
+}
+
 export default function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>(customersSeed as Customer[]);
+  const [customers, setCustomers] = useState<Customer[]>(
+    (customersSeed as Customer[]).map((customer) => normalizeCustomer(customer)),
+  );
   const [orders, setOrders] = useState<SalesOrder[]>(ordersSeed as SalesOrder[]);
   const [query, setQuery] = useState('');
   const [selectedCustomerName, setSelectedCustomerName] = useState<string>((customersSeed as Customer[])[0]?.name ?? '');
@@ -38,7 +71,20 @@ export default function CustomersPage() {
     if (!normalizedQuery) return customers;
 
     return customers.filter((customer) =>
-      [customer.name, customer.payment, customer.salesRep].join(' ').toLowerCase().includes(normalizedQuery),
+      [
+        customer.name,
+        customer.payment,
+        customer.salesRep,
+        customer.contactPerson ?? '',
+        customer.phone ?? '',
+        customer.email ?? '',
+        customer.billingAddress ?? '',
+        customer.shippingAddress ?? '',
+        customer.paymentTerm ?? '',
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery),
     );
   }, [customers, query]);
 
@@ -66,20 +112,12 @@ export default function CustomersPage() {
 
   function openEditCustomerDrawer(customer: Customer) {
     setEditingCustomer(customer);
-    setDraft({ ...customer });
+    setDraft(normalizeCustomer(customer));
   }
 
   function openAddCustomerDrawer() {
-    const blankCustomer: Customer = {
-      name: '',
-      orders: 0,
-      total: 0,
-      payment: '',
-      salesRep: '',
-      lastOrder: '',
-    };
     setEditingCustomer(null);
-    setDraft(blankCustomer);
+    setDraft(makeBlankCustomer());
   }
 
   function saveCustomerDraft() {
@@ -147,11 +185,11 @@ export default function CustomersPage() {
     <AppShell>
       <PageHeader
         title="Customer"
-        instruction="Select a customer to review their profile, orders, and order detail history."
+        instruction="Select a customer to review profile, order history, and quick order actions."
       />
 
       <div className="mb-4 rounded-xl border border-border bg-card p-3 text-xs text-secondaryText">
-        QuickBooks-style workflow: view order history inside the customer page; use View Full Order only when deeper Sales Order editing is needed.
+        Customer profile fields are master data. Orders, sales total, and last order are calculated from sales orders and are not manually entered on Add Customer.
       </div>
 
       <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
@@ -162,7 +200,7 @@ export default function CustomersPage() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <SearchBar value={query} onChange={setQuery} placeholder="Search Customer / Payment / Sales Rep" />
+        <SearchBar value={query} onChange={setQuery} placeholder="Search Customer / Contact / Phone / Address / Payment Term" />
         <Button variant="primary" onClick={openAddCustomerDrawer}>Add Customer</Button>
       </div>
 
@@ -173,7 +211,8 @@ export default function CustomersPage() {
           activeRowKey={selectedCustomer?.name}
           onRowClick={selectCustomer}
           columns={[
-            { key: 'name', header: 'Customer Name', render: (customer) => customer.name },
+            { key: 'name', header: 'Company Name', render: (customer) => customer.name },
+            { key: 'contact', header: 'Contact', render: (customer) => customer.contactPerson || 'Not set' },
             { key: 'orders', header: 'Orders', align: 'center', render: (customer) => customer.orders },
             { key: 'total', header: 'Sales Total', align: 'right', render: (customer) => formatCurrency(customer.total) },
           ]}
@@ -192,20 +231,24 @@ export default function CustomersPage() {
 
       <Drawer
         title={editingCustomer ? 'Edit Customer' : 'Add Customer'}
-        helper="Customer Name is required. Save updates local React state only."
+        helper="Create or update customer master data. Order totals are calculated automatically from Sales Orders."
         open={Boolean(draft)}
         onClose={() => setDraft(null)}
         onSave={saveCustomerDraft}
       >
         {draft ? (
           <div className="grid gap-4">
-            <FormField label="Customer Name *" value={draft.name} onChange={(value) => setDraft({ ...draft, name: value })} />
-            <FormField label="Orders" type="number" value={draft.orders} onChange={(value) => setDraft({ ...draft, orders: Number(value) })} />
-            <FormField label="Sales Total" type="number" value={draft.total} onChange={(value) => setDraft({ ...draft, total: Number(value) })} />
-            <FormField label="Payment Info" value={draft.payment} onChange={(value) => setDraft({ ...draft, payment: value })} />
-            <FormField label="Sales Rep" value={draft.salesRep} onChange={(value) => setDraft({ ...draft, salesRep: value })} />
-            <FormField label="Last Order" value={draft.lastOrder} onChange={(value) => setDraft({ ...draft, lastOrder: value })} />
-            <FormField label="Default Shipping Address" value="" multiline />
+            <FormField label="Company Name *" value={draft.name} onChange={(value) => setDraft({ ...draft, name: value })} />
+            <FormField label="Contact Person Name" value={draft.contactPerson ?? ''} onChange={(value) => setDraft({ ...draft, contactPerson: value })} />
+            <FormField label="Phone" value={draft.phone ?? ''} onChange={(value) => setDraft({ ...draft, phone: value })} />
+            <FormField label="Email" value={draft.email ?? ''} onChange={(value) => setDraft({ ...draft, email: value })} />
+            <FormField label="Billing Address" value={draft.billingAddress ?? ''} onChange={(value) => setDraft({ ...draft, billingAddress: value })} multiline />
+            <FormField label="Default Shipping Address" value={draft.shippingAddress ?? ''} onChange={(value) => setDraft({ ...draft, shippingAddress: value })} multiline />
+            <FormField label="Payment Term" value={draft.paymentTerm ?? ''} onChange={(value) => setDraft({ ...draft, paymentTerm: value })} />
+            <FormField label="Notes" value={draft.notes ?? ''} onChange={(value) => setDraft({ ...draft, notes: value })} multiline />
+            <div className="rounded-xl bg-warningBg p-3 text-xs text-warningText">
+              Orders, Sales Total, and Last Order are system-calculated fields. They are not entered when adding a customer.
+            </div>
           </div>
         ) : null}
       </Drawer>
@@ -283,6 +326,9 @@ function CustomerDetailPanel({
     );
   }
 
+  const customerSalesTotal = orders.reduce((sum, order) => sum + Number(order.subtotal || 0), 0);
+  const paymentStatuses = Array.from(new Set(orders.map((order) => order.payment).filter(Boolean))).join(' / ') || '—';
+
   return (
     <section className="rounded-xl border border-border bg-card p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -295,9 +341,24 @@ function CustomerDetailPanel({
 
       <div className="mb-5 grid grid-cols-1 gap-3 md:grid-cols-4">
         <MetricCard label="Orders" value={orders.length} />
-        <MetricCard label="Sales Total" value={formatCurrency(customer.total)} />
-        <MetricCard label="Payment Info" value={customer.payment || '—'} />
+        <MetricCard label="Sales Total" value={formatCurrency(customerSalesTotal || customer.total)} />
+        <MetricCard label="Order Payment Status" value={paymentStatuses} />
         <MetricCard label="Last Order" value={customer.lastOrder || '—'} />
+      </div>
+
+      <div className="mb-5 rounded-xl border border-border bg-page p-4">
+        <div className="mb-3 font-title text-base font-semibold text-primaryText">Customer Profile</div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <ReadOnlyField label="Company Name" value={customer.name} />
+          <ReadOnlyField label="Contact Person Name" value={customer.contactPerson || 'Not set'} />
+          <ReadOnlyField label="Phone" value={customer.phone || 'Not set'} />
+          <ReadOnlyField label="Email" value={customer.email || 'Not set'} />
+          <ReadOnlyField label="Payment Term" value={customer.paymentTerm || 'Not set'} />
+          <ReadOnlyField label="Sales Rep" value={customer.salesRep || '—'} />
+          <ReadOnlyField label="Billing Address" value={customer.billingAddress || 'Not set'} />
+          <ReadOnlyField label="Default Shipping Address" value={customer.shippingAddress || 'Not set'} />
+        </div>
+        {customer.notes ? <div className="mt-3 text-sm text-secondaryText">Notes: {customer.notes}</div> : null}
       </div>
 
       <div className="mb-4">
@@ -366,5 +427,18 @@ function SelectedCustomerOrderDetail({
         ]}
       />
     </div>
+  );
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-[13px] font-medium text-primaryText">{label}</span>
+      <input
+        value={value}
+        readOnly
+        className="h-[34px] w-full rounded-md border border-border bg-white px-3 text-sm text-primaryText"
+      />
+    </label>
   );
 }
