@@ -6,7 +6,6 @@ import customersSeed from '@/data/customers-seed.json';
 import ordersSeed from '@/data/orders-seed.json';
 import { AppShell } from '@/components/AppShell';
 import { Button } from '@/components/Button';
-import { DataTable } from '@/components/DataTable';
 import { Drawer } from '@/components/Drawer';
 import { FormField } from '@/components/FormField';
 import { PageHeader } from '@/components/PageHeader';
@@ -401,9 +400,9 @@ function CustomerDetailPanel({
 }) {
   if (!customer) {
     return (
-      <section className="rounded-xl border border-border bg-card p-5">
-        <h2 className="font-title text-base font-semibold text-primaryText">Customer Detail</h2>
-        <p className="mt-2 text-sm text-secondaryText">No customer selected.</p>
+      <section className="rounded-xl border border-border bg-card p-4">
+        <h2 className="font-title text-[15px] font-semibold text-primaryText">Customer Detail</h2>
+        <p className="mt-1 text-xs text-secondaryText">No customer selected.</p>
       </section>
     );
   }
@@ -412,25 +411,25 @@ function CustomerDetailPanel({
   const paymentStatuses = Array.from(new Set(orders.map((order) => order.payment).filter(Boolean))).join(' / ') || '—';
 
   return (
-    <section className="rounded-xl border border-border bg-card p-4">
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+    <section className="rounded-xl border border-border bg-card p-3">
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="font-title text-base font-semibold text-primaryText">{customer.name}</h2>
-          <p className="mt-1 text-xs text-helperText">Customer profile, order history, and quick order actions.</p>
+          <h2 className="font-title text-[15px] font-semibold text-primaryText">{customer.name}</h2>
+          <p className="mt-0.5 text-xs text-helperText">Customer profile, order history, and quick order actions.</p>
         </div>
         <Button onClick={() => onEditCustomer(customer)}>Edit Customer</Button>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-x-5 gap-y-1 rounded-xl border border-border bg-page px-3 py-2 text-xs text-secondaryText">
+      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-border bg-page px-3 py-1.5 text-xs text-secondaryText">
         <span>Orders: {orders.length}</span>
-        <span>Sales Total: {formatCurrency(customerSalesTotal || customer.total)}</span>
-        <span>Payment Status: {paymentStatuses}</span>
-        <span>Last Order: {customer.lastOrder || '—'}</span>
+        <span>Sales: {formatCurrency(customerSalesTotal || customer.total)}</span>
+        <span>Status: {paymentStatuses}</span>
+        <span>Last: {customer.lastOrder || '—'}</span>
       </div>
 
-      <div className="mb-4 rounded-xl border border-border bg-page p-4">
-        <div className="mb-3 font-title text-base font-semibold text-primaryText">Customer Profile</div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="mb-3 rounded-lg border border-border bg-page p-3">
+        <div className="mb-2 font-title text-[15px] font-semibold text-primaryText">Customer Profile</div>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           <ReadOnlyField label="Company Name" value={customer.name} />
           <ReadOnlyField label="Contact Person Name" value={customer.contactPerson || 'Not set'} />
           <ReadOnlyField label="Phone" value={customer.phone || 'Not set'} />
@@ -440,33 +439,69 @@ function CustomerDetailPanel({
           <ReadOnlyField label="Billing Address" value={customer.billingAddress || 'Not set'} />
           <ReadOnlyField label="Default Shipping Address" value={customer.shippingAddress || 'Not set'} />
         </div>
-        {customer.notes ? <div className="mt-3 text-sm text-secondaryText">Notes: {customer.notes}</div> : null}
+        {customer.notes ? <div className="mt-2 text-xs text-secondaryText">Notes: {customer.notes}</div> : null}
       </div>
 
-      <div className="mb-3 rounded-xl bg-warningBg p-3 text-sm text-warningText">
-        <strong>Step 2A:</strong> Click one order below. <strong>Step 2B:</strong> Review its line items in Selected Order Detail.
+      <div className="mb-2 rounded-lg bg-warningBg px-3 py-2 text-xs text-warningText">
+        <strong>Step 2A:</strong> Click one order below. <strong>Step 2B:</strong> Review line items in Selected Order Detail.
       </div>
 
-      <div className="mb-4">
-        <div className="mb-2 font-title text-base font-semibold text-primaryText">Orders from this Customer</div>
-        <DataTable
-          rows={orders}
-          rowKey={(order) => order.invoice}
-          activeRowKey={selectedOrder?.invoice}
-          onRowClick={onSelectOrder}
-          emptyMessage="No orders found for this customer."
-          columns={[
-            { key: 'invoice', header: 'Invoice #', render: (order) => order.invoice },
-            { key: 'date', header: 'Date', render: (order) => order.date },
-            { key: 'po', header: 'PO #', render: (order) => order.po || '—' },
-            { key: 'payment', header: 'Status', render: (order) => order.payment || '—' },
-            { key: 'subtotal', header: 'Subtotal', align: 'right', render: (order) => formatCurrency(order.subtotal) },
-          ]}
-        />
+      <div className="mb-3">
+        <div className="mb-1.5 font-title text-[15px] font-semibold text-primaryText">Orders from this Customer</div>
+        <CompactOrdersTable orders={orders} selectedOrder={selectedOrder} onSelectOrder={onSelectOrder} />
       </div>
 
       <SelectedCustomerOrderDetail order={selectedOrder} onEditPayment={onEditPayment} onEditLine={onEditLine} />
     </section>
+  );
+}
+
+function CompactOrdersTable({
+  orders,
+  selectedOrder,
+  onSelectOrder,
+}: {
+  orders: SalesOrder[];
+  selectedOrder?: SalesOrder;
+  onSelectOrder: (order: SalesOrder) => void;
+}) {
+  if (orders.length === 0) {
+    return <div className="rounded-lg border border-border bg-card p-3 text-xs text-secondaryText">No orders found for this customer.</div>;
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <table className="w-full border-collapse text-[13px]">
+        <thead className="bg-header">
+          <tr>
+            <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">Invoice #</th>
+            <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">Date</th>
+            <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">PO #</th>
+            <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">Status</th>
+            <th className="h-8 border-b border-border px-2 text-right font-semibold text-primaryText">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((order) => {
+            const isSelected = order.invoice === selectedOrder?.invoice;
+
+            return (
+              <tr
+                key={order.invoice}
+                onClick={() => onSelectOrder(order)}
+                className={`cursor-pointer hover:bg-page ${isSelected ? 'bg-page font-semibold' : ''}`}
+              >
+                <td className="border-b border-border px-2 py-2 text-primaryText">{order.invoice}</td>
+                <td className="border-b border-border px-2 py-2 text-primaryText">{order.date}</td>
+                <td className="border-b border-border px-2 py-2 text-primaryText">{order.po || '—'}</td>
+                <td className="border-b border-border px-2 py-2 text-primaryText">{order.payment || '—'}</td>
+                <td className="border-b border-border px-2 py-2 text-right text-primaryText">{formatCurrency(order.subtotal)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -480,15 +515,15 @@ function SelectedCustomerOrderDetail({
   onEditLine: (line: SalesOrderLineItem) => void;
 }) {
   if (!order) {
-    return <div className="rounded-xl border border-border bg-page p-4 text-sm text-secondaryText">Select an order to view line item details.</div>;
+    return <div className="rounded-lg border border-border bg-page p-3 text-xs text-secondaryText">Select an order to view line item details.</div>;
   }
 
   return (
-    <div className="rounded-xl border border-border bg-page p-4">
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+    <div className="rounded-lg border border-border bg-page p-3">
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <div className="font-title text-base font-semibold text-primaryText">Selected Order Detail</div>
-          <div className="mt-1 text-xs text-helperText">
+          <div className="font-title text-[15px] font-semibold text-primaryText">Selected Order Detail</div>
+          <div className="mt-0.5 text-xs text-helperText">
             {order.invoice} · {order.date} · PO {order.po || '—'} · Payment: {order.payment || '—'}
           </div>
         </div>
@@ -500,18 +535,46 @@ function SelectedCustomerOrderDetail({
         </div>
       </div>
 
-      <DataTable
-        rows={order.items}
-        rowKey={(line: SalesOrderLineItem, index) => `${line.sku}-${index}`}
-        columns={[
-          { key: 'sku', header: 'SKU', render: (line) => line.sku },
-          { key: 'description', header: 'Description', render: (line) => line.description },
-          { key: 'qty', header: 'Qty', align: 'center', render: (line) => line.qty },
-          { key: 'unit', header: 'Unit', align: 'right', render: (line) => formatCurrency(line.unitPrice) },
-          { key: 'total', header: 'Total', align: 'right', render: (line) => formatCurrency(line.total || line.qty * line.unitPrice) },
-          { key: 'action', header: 'Action', align: 'center', render: (line) => <Button size="small" onClick={() => onEditLine(line)}>Edit</Button> },
-        ]}
-      />
+      <CompactLineItemsTable items={order.items} onEditLine={onEditLine} />
+    </div>
+  );
+}
+
+function CompactLineItemsTable({
+  items,
+  onEditLine,
+}: {
+  items: SalesOrderLineItem[];
+  onEditLine: (line: SalesOrderLineItem) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <table className="w-full border-collapse text-[13px]">
+        <thead className="bg-header">
+          <tr>
+            <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">SKU</th>
+            <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">Description</th>
+            <th className="h-8 border-b border-border px-2 text-center font-semibold text-primaryText">Qty</th>
+            <th className="h-8 border-b border-border px-2 text-right font-semibold text-primaryText">Unit</th>
+            <th className="h-8 border-b border-border px-2 text-right font-semibold text-primaryText">Total</th>
+            <th className="h-8 border-b border-border px-2 text-center font-semibold text-primaryText">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((line, index) => (
+            <tr key={`${line.sku}-${index}`}>
+              <td className="border-b border-border px-2 py-2 text-primaryText">{line.sku}</td>
+              <td className="border-b border-border px-2 py-2 text-primaryText">{line.description}</td>
+              <td className="border-b border-border px-2 py-2 text-center text-primaryText">{line.qty}</td>
+              <td className="border-b border-border px-2 py-2 text-right text-primaryText">{formatCurrency(line.unitPrice)}</td>
+              <td className="border-b border-border px-2 py-2 text-right text-primaryText">{formatCurrency(line.total || line.qty * line.unitPrice)}</td>
+              <td className="border-b border-border px-2 py-2 text-center">
+                <Button size="small" onClick={() => onEditLine(line)}>Edit</Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -519,11 +582,11 @@ function SelectedCustomerOrderDetail({
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[13px] font-medium text-primaryText">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-primaryText">{label}</span>
       <input
         value={value}
         readOnly
-        className="h-[34px] w-full rounded-md border border-border bg-white px-3 text-sm text-primaryText"
+        className="h-8 w-full rounded-md border border-border bg-white px-2 text-[13px] text-primaryText"
       />
     </label>
   );
