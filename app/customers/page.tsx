@@ -20,6 +20,8 @@ type PaymentDraft = {
   payment: string;
 };
 
+type CustomerSortKey = 'customer-asc' | 'customer-desc' | 'last-order-desc' | 'last-order-asc' | 'orders-desc' | 'orders-asc';
+
 function normalizeCustomer(customer: Customer): Customer {
   return {
     ...customer,
@@ -51,12 +53,38 @@ function makeBlankCustomer(): Customer {
   };
 }
 
+function sortCustomers(customers: Customer[], sortKey: CustomerSortKey) {
+  const sorted = [...customers];
+
+  sorted.sort((a, b) => {
+    switch (sortKey) {
+      case 'customer-asc':
+        return a.name.localeCompare(b.name);
+      case 'customer-desc':
+        return b.name.localeCompare(a.name);
+      case 'last-order-desc':
+        return (b.lastOrder || '').localeCompare(a.lastOrder || '');
+      case 'last-order-asc':
+        return (a.lastOrder || '').localeCompare(b.lastOrder || '');
+      case 'orders-desc':
+        return Number(b.orders || 0) - Number(a.orders || 0);
+      case 'orders-asc':
+        return Number(a.orders || 0) - Number(b.orders || 0);
+      default:
+        return 0;
+    }
+  });
+
+  return sorted;
+}
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>(
     (customersSeed as Customer[]).map((customer) => normalizeCustomer(customer)),
   );
   const [orders, setOrders] = useState<SalesOrder[]>(ordersSeed as SalesOrder[]);
   const [query, setQuery] = useState('');
+  const [sortKey, setSortKey] = useState<CustomerSortKey>('customer-asc');
   const [selectedCustomerName, setSelectedCustomerName] = useState<string>((customersSeed as Customer[])[0]?.name ?? '');
   const [selectedInvoice, setSelectedInvoice] = useState<string>('');
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -67,26 +95,27 @@ export default function CustomersPage() {
 
   const filteredCustomers = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
+    const matchedCustomers = normalizedQuery
+      ? customers.filter((customer) =>
+          [
+            customer.name,
+            customer.payment,
+            customer.salesRep,
+            customer.contactPerson ?? '',
+            customer.phone ?? '',
+            customer.email ?? '',
+            customer.billingAddress ?? '',
+            customer.shippingAddress ?? '',
+            customer.paymentTerm ?? '',
+          ]
+            .join(' ')
+            .toLowerCase()
+            .includes(normalizedQuery),
+        )
+      : customers;
 
-    if (!normalizedQuery) return customers;
-
-    return customers.filter((customer) =>
-      [
-        customer.name,
-        customer.payment,
-        customer.salesRep,
-        customer.contactPerson ?? '',
-        customer.phone ?? '',
-        customer.email ?? '',
-        customer.billingAddress ?? '',
-        customer.shippingAddress ?? '',
-        customer.paymentTerm ?? '',
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(normalizedQuery),
-    );
-  }, [customers, query]);
+    return sortCustomers(matchedCustomers, sortKey);
+  }, [customers, query, sortKey]);
 
   const selectedCustomer =
     filteredCustomers.find((customer) => customer.name === selectedCustomerName) ?? filteredCustomers[0];
@@ -108,6 +137,15 @@ export default function CustomersPage() {
     setSelectedCustomerName(customer.name);
     const firstOrder = orders.find((order) => order.customer.toLowerCase() === customer.name.toLowerCase());
     setSelectedInvoice(firstOrder?.invoice ?? '');
+  }
+
+  function handleSortChange(value: CustomerSortKey) {
+    setSortKey(value);
+    const sorted = sortCustomers(filteredCustomers, value);
+
+    if (sorted.length > 0) {
+      selectCustomer(sorted[0]);
+    }
   }
 
   function openEditCustomerDrawer(customer: Customer) {
@@ -185,48 +223,97 @@ export default function CustomersPage() {
     <AppShell>
       <PageHeader
         title="Customer"
-        instruction="Select a customer to review profile, order history, and quick order actions."
+        instruction="Step 1: select a customer from the left. Step 2: review profile, orders, and order detail on the right."
       />
 
-      <div className="mb-4 rounded-xl border border-border bg-card p-3 text-xs text-secondaryText">
-        Customer profile fields are master data. Orders, sales total, and last order are calculated from sales orders and are not manually entered on Add Customer.
+      <div className="mb-3 rounded-xl border border-border bg-card p-2.5 text-xs text-secondaryText">
+        Customer profile fields are master data. Orders, sales total, and last order are calculated from Sales Orders.
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-        <MetricCard label="Customers" value={filteredCustomers.length} />
-        <MetricCard label="Total Orders" value={orderTotal} />
-        <MetricCard label="Sales Total" value={formatCurrency(salesTotal)} />
-        <MetricCard label="Waiting Status" value={waitingCount} />
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2">
+        <div className="flex flex-wrap gap-4 text-[13px] text-primaryText">
+          <span><strong>{filteredCustomers.length}</strong> Customers</span>
+          <span><strong>{orderTotal}</strong> Orders</span>
+          <span><strong>{formatCurrency(salesTotal)}</strong> Total Sales</span>
+          <span><strong>{waitingCount}</strong> Waiting</span>
+        </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <SearchBar value={query} onChange={setQuery} placeholder="Search Customer / Contact / Phone / Address / Payment Term" />
         <Button variant="primary" onClick={openAddCustomerDrawer}>Add Customer</Button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[420px_1fr]">
-        <DataTable
-          rows={filteredCustomers}
-          rowKey={(customer) => customer.name}
-          activeRowKey={selectedCustomer?.name}
-          onRowClick={selectCustomer}
-          columns={[
-            { key: 'name', header: 'Company Name', render: (customer) => customer.name },
-            { key: 'contact', header: 'Contact', render: (customer) => customer.contactPerson || 'Not set' },
-            { key: 'orders', header: 'Orders', align: 'center', render: (customer) => customer.orders },
-            { key: 'total', header: 'Sales Total', align: 'right', render: (customer) => formatCurrency(customer.total) },
-          ]}
-        />
+      <div className="grid gap-4 lg:grid-cols-[460px_1fr]">
+        <section className="rounded-xl border border-border bg-card p-3">
+          <div className="mb-3 rounded-xl bg-warningBg p-3 text-sm text-warningText">
+            <strong>Step 1:</strong> Click a Customer below. The selected row turns bold and the detail opens on the right.
+          </div>
 
-        <CustomerDetailPanel
-          customer={selectedCustomer}
-          orders={selectedCustomerOrders}
-          selectedOrder={selectedOrder}
-          onSelectOrder={(order) => setSelectedInvoice(order.invoice)}
-          onEditCustomer={openEditCustomerDrawer}
-          onEditPayment={openPaymentDrawer}
-          onEditLine={openLineDrawer}
-        />
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="font-title text-base font-semibold text-primaryText">Customer List</div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-secondaryText" htmlFor="customer-sort-left">Sort</label>
+              <select
+                id="customer-sort-left"
+                value={sortKey}
+                onChange={(event) => handleSortChange(event.target.value as CustomerSortKey)}
+                className="h-8 rounded-full border border-border bg-white px-3 text-[13px] text-primaryText"
+              >
+                <option value="customer-asc">Customer: A-Z</option>
+                <option value="customer-desc">Customer: Z-A</option>
+                <option value="last-order-desc">Last Order: Newest</option>
+                <option value="last-order-asc">Last Order: Oldest</option>
+                <option value="orders-desc">Orders: Most</option>
+                <option value="orders-asc">Orders: Fewest</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            <table className="w-full border-collapse text-[13px]">
+              <thead className="bg-header">
+                <tr>
+                  <th className="h-9 w-[52%] border-b border-border px-2 text-left font-semibold text-primaryText">Company</th>
+                  <th className="h-9 w-[18%] border-b border-border px-2 text-center font-semibold text-primaryText">Orders</th>
+                  <th className="h-9 w-[30%] border-b border-border px-2 text-left font-semibold text-primaryText">Last Order</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCustomers.map((customer) => {
+                  const isSelected = customer.name === selectedCustomer?.name;
+
+                  return (
+                    <tr
+                      key={customer.name}
+                      onClick={() => selectCustomer(customer)}
+                      className={`cursor-pointer hover:bg-page ${isSelected ? 'bg-page font-semibold' : ''}`}
+                    >
+                      <td className="border-b border-border px-2 py-2 text-primaryText">{customer.name}</td>
+                      <td className="border-b border-border px-2 py-2 text-center text-primaryText">{customer.orders}</td>
+                      <td className="border-b border-border px-2 py-2 text-primaryText">{customer.lastOrder || '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-xl border-2 border-primaryButton/30 bg-white p-3">
+          <div className="mb-3 rounded-xl bg-successBg p-3 text-sm text-successText">
+            <strong>Step 2:</strong> Review the selected Customer here. Current selection: <strong>{selectedCustomer?.name ?? 'None'}</strong>
+          </div>
+          <CustomerDetailPanel
+            customer={selectedCustomer}
+            orders={selectedCustomerOrders}
+            selectedOrder={selectedOrder}
+            onSelectOrder={(order) => setSelectedInvoice(order.invoice)}
+            onEditCustomer={openEditCustomerDrawer}
+            onEditPayment={openPaymentDrawer}
+            onEditLine={openLineDrawer}
+          />
+        </section>
       </div>
 
       <Drawer
