@@ -343,7 +343,7 @@ export default function CustomersPage() {
       >
         {paymentDraft ? (
           <div className="grid gap-4">
-            <FormField label="Invoice #" value={paymentDraft.invoice} />
+            <FormField label="Sales Order #" value={paymentDraft.invoice} />
             <FormField label="Payment Info" value={paymentDraft.payment} onChange={(value) => setPaymentDraft({ ...paymentDraft, payment: value })} />
             <div className="rounded-xl bg-warningBg p-3 text-xs text-warningText">
               Suggested values: Waiting, Paid, SQ Invoice, Consignment, or custom text.
@@ -474,7 +474,7 @@ function CompactOrdersTable({
       <table className="w-full border-collapse text-[13px]">
         <thead className="bg-header">
           <tr>
-            <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">Invoice #</th>
+            <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">Sales Order #</th>
             <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">Date</th>
             <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">PO #</th>
             <th className="h-8 border-b border-border px-2 text-left font-semibold text-primaryText">Status</th>
@@ -528,7 +528,7 @@ function SelectedCustomerOrderDetail({
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href={`/sales-orders?invoice=${encodeURIComponent(order.invoice)}`}>
+          <Link href={`/sales-orders?salesOrder=${encodeURIComponent(order.invoice)}`}>
             <Button>View Full Order</Button>
           </Link>
           <Button onClick={() => onEditPayment(order)}>Edit Payment</Button>
