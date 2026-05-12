@@ -1,9 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
-import customersSeed from '@/data/customers-seed.json';
-import ordersSeed from '@/data/orders-seed.json';
+import { useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { Button } from '@/components/Button';
 import { Drawer } from '@/components/Drawer';
@@ -19,6 +17,51 @@ type PaymentDraft = {
 };
 
 type CustomerSortKey = 'customer-asc' | 'customer-desc' | 'last-order-desc' | 'last-order-asc' | 'orders-desc' | 'orders-asc';
+
+type CustomerApiLineItem = {
+  sku: string;
+  description: string;
+  width: string;
+  length: string;
+  category: string;
+  qty: number;
+  unitPrice: number;
+  total: number;
+};
+
+type CustomerApiSalesOrder = {
+  invoice: string;
+  date: string;
+  shipDate: string;
+  customer: string;
+  po: string;
+  payment: string;
+  shipMethod: string;
+  shipCost: string;
+  salesRep: string;
+  items: CustomerApiLineItem[];
+  totalQty: number;
+  subtotal: number;
+  fulfillmentStatus?: string;
+  paymentStatus?: string;
+  cancelReason?: string | null;
+  statusNotes?: string;
+};
+
+type CustomerApiRecord = {
+  ui: Customer;
+  salesOrders: CustomerApiSalesOrder[];
+};
+
+type CustomersResponse =
+  | {
+      ok: true;
+      data: CustomerApiRecord[];
+    }
+  | {
+      ok: false;
+      error: string;
+    };
 
 function normalizeCustomer(customer: Customer): Customer {
   return {
@@ -51,6 +94,23 @@ function makeBlankCustomer(): Customer {
   };
 }
 
+function mapCancelReason(value?: string | null) {
+  if (value === 'CUSTOMER_CANCELLED') return 'Customer Cancelled';
+  if (value === 'OUT_OF_STOCK') return 'Out of Stock';
+  if (value === 'WRONG_ORDER') return 'Wrong Order';
+  if (value === 'OTHER') return 'Other';
+  return '';
+}
+
+function mapSalesOrder(order: CustomerApiSalesOrder): SalesOrder {
+  return {
+    ...order,
+    fulfillmentStatus: order.fulfillmentStatus as SalesOrder['fulfillmentStatus'],
+    paymentStatus: order.paymentStatus as SalesOrder['paymentStatus'],
+    cancelReason: mapCancelReason(order.cancelReason),
+  };
+}
+
 function sortCustomers(customers: Customer[], sortKey: CustomerSortKey) {
   const sorted = [...customers];
 
@@ -77,19 +137,74 @@ function sortCustomers(customers: Customer[], sortKey: CustomerSortKey) {
 }
 
 export default function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>(
-    (customersSeed as Customer[]).map((customer) => normalizeCustomer(customer)),
-  );
-  const [orders, setOrders] = useState<SalesOrder[]>(ordersSeed as SalesOrder[]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState<CustomerSortKey>('customer-asc');
-  const [selectedCustomerName, setSelectedCustomerName] = useState<string>((customersSeed as Customer[])[0]?.name ?? '');
+  const [selectedCustomerName, setSelectedCustomerName] = useState<string>('');
   const [selectedInvoice, setSelectedInvoice] = useState<string>('');
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [draft, setDraft] = useState<Customer | null>(null);
   const [paymentDraft, setPaymentDraft] = useState<PaymentDraft | null>(null);
   const [editingLine, setEditingLine] = useState<SalesOrderLineItem | null>(null);
   const [draftLine, setDraftLine] = useState<SalesOrderLineItem | null>(null);
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(true);
+  const [customersError, setCustomersError] = useState('');
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCustomers() {
+      setIsLoadingCustomers(true);
+      setCustomersError('');
+
+      try {
+        const response = await fetch('/api/customers', {
+          cache: 'no-store',
+        });
+        const result = (await response.json()) as CustomersResponse;
+
+        if (!response.ok || !result.ok) {
+          throw new Error(result.ok ? 'Failed to load customers' : result.error);
+        }
+
+        const nextCustomers = result.data.map((customer) => normalizeCustomer(customer.ui));
+        const nextOrders = result.data.flatMap((customer) => customer.salesOrders.map((order) => mapSalesOrder(order)));
+
+        if (!isMounted) return;
+
+        setCustomers(nextCustomers);
+        setOrders(nextOrders);
+        setSelectedCustomerName((current) => {
+          if (current && nextCustomers.some((customer) => customer.name === current)) {
+            return current;
+          }
+
+          return nextCustomers[0]?.name ?? '';
+        });
+        setSelectedInvoice((current) => {
+          if (current && nextOrders.some((order) => order.invoice === current)) {
+            return current;
+          }
+
+          return nextOrders[0]?.invoice ?? '';
+        });
+      } catch (error) {
+        if (!isMounted) return;
+        setCustomersError(error instanceof Error ? error.message : 'Failed to load customers');
+      } finally {
+        if (isMounted) {
+          setIsLoadingCustomers(false);
+        }
+      }
+    }
+
+    loadCustomers();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const filteredCustomers = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -221,8 +336,20 @@ export default function CustomersPage() {
       />
 
       <div className="mb-3 rounded-xl border border-border bg-card p-2.5 text-xs text-secondaryText">
-        Customer profile fields are master data. Orders, sales total, and last order are calculated from Sales Orders.
+        Customer records load from PostgreSQL. Orders, sales total, and last order are calculated from Sales Orders.
       </div>
+
+      {isLoadingCustomers ? (
+        <div className="mb-3 rounded-xl border border-border bg-card p-3 text-sm text-secondaryText">
+          Loading customers from database...
+        </div>
+      ) : null}
+
+      {customersError ? (
+        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {customersError}
+        </div>
+      ) : null}
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2">
         <div className="flex flex-wrap gap-4 text-[13px] text-primaryText">
