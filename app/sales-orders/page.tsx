@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import ordersSeed from '@/data/orders-seed.json';
 import { AppShell } from '@/components/AppShell';
 import { Button } from '@/components/Button';
 import { Drawer } from '@/components/Drawer';
@@ -28,6 +27,18 @@ type StatusDraft = {
   cancelReason: CancelReason;
   statusNotes: string;
 };
+
+type SalesOrdersResponse =
+  | {
+      ok: true;
+      data: Array<{
+        ui: SalesOrder;
+      }>;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
 
 function normalizeOrder(order: SalesOrder): SalesOrder {
   return {
@@ -83,13 +94,61 @@ function SalesOrdersLoading() {
 
 function SalesOrdersContent() {
   const searchParams = useSearchParams();
-  const [orders, setOrders] = useState<SalesOrder[]>((ordersSeed as SalesOrder[]).map((order) => normalizeOrder(order)));
+  const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('date-desc');
-  const [selectedInvoice, setSelectedInvoice] = useState<string>((ordersSeed as SalesOrder[])[0]?.invoice ?? '');
+  const [selectedInvoice, setSelectedInvoice] = useState<string>('');
   const [editingLine, setEditingLine] = useState<SalesOrderLineItem | null>(null);
   const [draftLine, setDraftLine] = useState<SalesOrderLineItem | null>(null);
   const [statusDraft, setStatusDraft] = useState<StatusDraft | null>(null);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [ordersError, setOrdersError] = useState('');
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadSalesOrders() {
+      setIsLoadingOrders(true);
+      setOrdersError('');
+
+      try {
+        const response = await fetch('/api/sales-orders', {
+          cache: 'no-store',
+        });
+        const result = (await response.json()) as SalesOrdersResponse;
+
+        if (!response.ok || !result.ok) {
+          throw new Error(result.ok ? 'Failed to load sales orders' : result.error);
+        }
+
+        const nextOrders = result.data.map((order) => normalizeOrder(order.ui));
+
+        if (!isMounted) return;
+
+        setOrders(nextOrders);
+        setSelectedInvoice((current) => {
+          if (current && nextOrders.some((order) => order.invoice === current)) {
+            return current;
+          }
+
+          return nextOrders[0]?.invoice ?? '';
+        });
+      } catch (error) {
+        if (!isMounted) return;
+        setOrdersError(error instanceof Error ? error.message : 'Failed to load sales orders');
+      } finally {
+        if (isMounted) {
+          setIsLoadingOrders(false);
+        }
+      }
+    }
+
+    loadSalesOrders();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     const requestedSalesOrder = searchParams.get('salesOrder') ?? searchParams.get('invoice');
@@ -242,8 +301,20 @@ function SalesOrdersContent() {
       <PageHeader title="Sales Order" instruction="Step 1: select a Sales Order from the left. Step 2: review or edit details on the right." />
 
       <div className="mb-3 rounded-xl border border-border bg-card p-2.5 text-xs text-secondaryText">
-        Sales Orders use local seed data only. Status and line edits update React state and do not deduct inventory.
+        Sales Orders and line items load from PostgreSQL. Status and line edits remain local-only until the next backend integration step.
       </div>
+
+      {isLoadingOrders ? (
+        <div className="mb-3 rounded-xl border border-border bg-card p-3 text-sm text-secondaryText">
+          Loading sales orders from database...
+        </div>
+      ) : null}
+
+      {ordersError ? (
+        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {ordersError}
+        </div>
+      ) : null}
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2">
         <div className="flex flex-wrap gap-4 text-[13px] text-primaryText">
