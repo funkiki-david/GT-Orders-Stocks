@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/AppShell';
 import { Button } from '@/components/Button';
@@ -39,6 +39,37 @@ type SalesOrdersResponse =
       ok: false;
       error: string;
     };
+
+type MutationResponse =
+  | {
+      ok: true;
+      data: unknown;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+function fulfillmentStatusValue(value: FulfillmentStatus) {
+  if (value === 'Shipped') return 'SHIPPED';
+  if (value === 'Billed Closed') return 'BILLED_CLOSED';
+  if (value === 'Cancelled') return 'CANCELLED';
+  return 'OPEN';
+}
+
+function paymentStatusValue(value: PaymentStatus) {
+  if (value === 'Paid') return 'PAID';
+  if (value === 'No Charge') return 'NO_CHARGE';
+  return 'UNPAID';
+}
+
+function cancelReasonValue(value: CancelReason) {
+  if (value === 'Customer Cancelled') return 'CUSTOMER_CANCELLED';
+  if (value === 'Out of Stock') return 'OUT_OF_STOCK';
+  if (value === 'Wrong Order') return 'WRONG_ORDER';
+  if (value === 'Other') return 'OTHER';
+  return null;
+}
 
 function normalizeOrder(order: SalesOrder): SalesOrder {
   return {
@@ -103,52 +134,59 @@ function SalesOrdersContent() {
   const [statusDraft, setStatusDraft] = useState<StatusDraft | null>(null);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [ordersError, setOrdersError] = useState('');
+  const [isSavingStatus, setIsSavingStatus] = useState(false);
+  const [statusError, setStatusError] = useState('');
+  const [isSavingLine, setIsSavingLine] = useState(false);
+  const [lineError, setLineError] = useState('');
+
+  const loadSalesOrders = useCallback(async (preferredInvoice?: string) => {
+    setIsLoadingOrders(true);
+    setOrdersError('');
+
+    try {
+      const response = await fetch('/api/sales-orders', {
+        cache: 'no-store',
+      });
+      const result = (await response.json()) as SalesOrdersResponse;
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.ok ? 'Failed to load sales orders' : result.error);
+      }
+
+      const nextOrders = result.data.map((order) => normalizeOrder(order.ui));
+
+      setOrders(nextOrders);
+      setSelectedInvoice((current) => {
+        const nextSelection = preferredInvoice ?? current;
+        if (nextSelection && nextOrders.some((order) => order.invoice === nextSelection)) {
+          return nextSelection;
+        }
+
+        return nextOrders[0]?.invoice ?? '';
+      });
+    } finally {
+      setIsLoadingOrders(false);
+    }
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
 
-    async function loadSalesOrders() {
-      setIsLoadingOrders(true);
-      setOrdersError('');
-
+    async function loadInitialSalesOrders() {
       try {
-        const response = await fetch('/api/sales-orders', {
-          cache: 'no-store',
-        });
-        const result = (await response.json()) as SalesOrdersResponse;
-
-        if (!response.ok || !result.ok) {
-          throw new Error(result.ok ? 'Failed to load sales orders' : result.error);
-        }
-
-        const nextOrders = result.data.map((order) => normalizeOrder(order.ui));
-
-        if (!isMounted) return;
-
-        setOrders(nextOrders);
-        setSelectedInvoice((current) => {
-          if (current && nextOrders.some((order) => order.invoice === current)) {
-            return current;
-          }
-
-          return nextOrders[0]?.invoice ?? '';
-        });
+        await loadSalesOrders();
       } catch (error) {
         if (!isMounted) return;
         setOrdersError(error instanceof Error ? error.message : 'Failed to load sales orders');
-      } finally {
-        if (isMounted) {
-          setIsLoadingOrders(false);
-        }
       }
     }
 
-    loadSalesOrders();
+    loadInitialSalesOrders();
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [loadSalesOrders]);
 
   useEffect(() => {
     const requestedSalesOrder = searchParams.get('salesOrder') ?? searchParams.get('invoice');
@@ -193,39 +231,50 @@ function SalesOrdersContent() {
   function openLineDrawer(line: SalesOrderLineItem) {
     setEditingLine(line);
     setDraftLine({ ...line });
+    setLineError('');
   }
 
-  function saveLineDraft() {
+  async function saveLineDraft() {
     if (!draftLine || !editingLine || !selectedOrder) return;
+    if (!editingLine.id) {
+      setLineError('Could not save line item because its database id is missing.');
+      return;
+    }
 
-    const updatedLine = {
-      ...draftLine,
-      total: Number(draftLine.qty || 0) * Number(draftLine.unitPrice || 0),
-    };
+    setIsSavingLine(true);
+    setLineError('');
 
-    setOrders((current) =>
-      current.map((order) => {
-        if (order.invoice !== selectedOrder.invoice) {
-          return order;
-        }
+    try {
+      const response = await fetch(`/api/sales-order-items/${editingLine.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          skuCode: draftLine.sku,
+          productDescription: draftLine.description,
+          width: draftLine.width,
+          length: draftLine.length,
+          category: draftLine.category,
+          qtyCtn: draftLine.qty,
+          unitPrice: draftLine.unitPrice,
+          total: Number(draftLine.qty || 0) * Number(draftLine.unitPrice || 0),
+        }),
+      });
+      const result = (await response.json()) as MutationResponse;
 
-        const items = order.items.map((line) =>
-          line.sku === editingLine.sku && line.description === editingLine.description ? updatedLine : line,
-        );
-        const totalQty = items.reduce((sum, item) => sum + Number(item.qty || 0), 0);
-        const subtotal = items.reduce((sum, item) => sum + Number(item.total || 0), 0);
+      if (!response.ok || !result.ok) {
+        throw new Error(result.ok ? 'Could not save line item' : result.error);
+      }
 
-        return {
-          ...order,
-          items,
-          totalQty,
-          subtotal,
-        };
-      }),
-    );
-
-    setEditingLine(null);
-    setDraftLine(null);
+      await loadSalesOrders(selectedOrder.invoice);
+      setEditingLine(null);
+      setDraftLine(null);
+    } catch (error) {
+      setLineError(error instanceof Error ? error.message : 'Could not save line item');
+    } finally {
+      setIsSavingLine(false);
+    }
   }
 
   function openStatusDrawer(order: SalesOrder) {
@@ -238,29 +287,47 @@ function SalesOrdersContent() {
       cancelReason: normalized.cancelReason ?? '',
       statusNotes: normalized.statusNotes ?? '',
     });
+    setStatusError('');
   }
 
-  function saveStatusDraft() {
+  async function saveStatusDraft() {
     if (!statusDraft) return;
+    const targetOrder = orders.find((order) => order.invoice === statusDraft.invoice);
+    if (!targetOrder?.id) {
+      setStatusError('Could not save status because the order database id is missing.');
+      return;
+    }
 
-    setOrders((current) =>
-      current.map((order) => {
-        if (order.invoice !== statusDraft.invoice) return order;
+    setIsSavingStatus(true);
+    setStatusError('');
 
-        const isCancelled = statusDraft.fulfillmentStatus === 'Cancelled';
-
-        return {
-          ...order,
-          fulfillmentStatus: statusDraft.fulfillmentStatus,
-          paymentStatus: statusDraft.paymentStatus,
-          cancelReason: isCancelled ? statusDraft.cancelReason : '',
+    try {
+      const isCancelled = statusDraft.fulfillmentStatus === 'Cancelled';
+      const response = await fetch(`/api/sales-orders/${targetOrder.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fulfillmentStatus: fulfillmentStatusValue(statusDraft.fulfillmentStatus),
+          paymentStatus: paymentStatusValue(statusDraft.paymentStatus),
+          cancelReason: isCancelled ? cancelReasonValue(statusDraft.cancelReason) : null,
           statusNotes: statusDraft.statusNotes,
-          payment: statusDraft.paymentStatus,
-        };
-      }),
-    );
+        }),
+      });
+      const result = (await response.json()) as MutationResponse;
 
-    setStatusDraft(null);
+      if (!response.ok || !result.ok) {
+        throw new Error(result.ok ? 'Could not save status' : result.error);
+      }
+
+      await loadSalesOrders(statusDraft.invoice);
+      setStatusDraft(null);
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : 'Could not save status');
+    } finally {
+      setIsSavingStatus(false);
+    }
   }
 
   function handleSearch(value: string) {
@@ -301,7 +368,7 @@ function SalesOrdersContent() {
       <PageHeader title="Sales Order" instruction="Step 1: select a Sales Order from the left. Step 2: review or edit details on the right." />
 
       <div className="mb-3 rounded-xl border border-border bg-card p-2.5 text-xs text-secondaryText">
-        Sales Orders and line items load from PostgreSQL. Status and line edits remain local-only until the next backend integration step.
+        Sales Orders and line items load from PostgreSQL. Status and line edits save to the database.
       </div>
 
       {isLoadingOrders ? (
@@ -397,11 +464,25 @@ function SalesOrdersContent() {
         title="Update Sales Order Status"
         helper="Use the simplest v1 status model. Cancel Reason appears only when Fulfillment is Cancelled."
         open={Boolean(statusDraft)}
-        onClose={() => setStatusDraft(null)}
+        onClose={() => {
+          if (isSavingStatus) return;
+          setStatusDraft(null);
+          setStatusError('');
+        }}
         onSave={saveStatusDraft}
       >
         {statusDraft ? (
           <div className="grid gap-4">
+            {statusError ? (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                {statusError}
+              </div>
+            ) : null}
+            {isSavingStatus ? (
+              <div className="rounded-xl border border-border bg-page p-3 text-xs text-secondaryText">
+                Saving sales order status to database...
+              </div>
+            ) : null}
             <FormField label="Sales Order #" value={statusDraft.invoice} />
 
             <label className="block">
@@ -473,13 +554,25 @@ function SalesOrdersContent() {
         helper="Line item changes update this Sales Order only. They do not update Inventory master data."
         open={Boolean(draftLine)}
         onClose={() => {
+          if (isSavingLine) return;
           setEditingLine(null);
           setDraftLine(null);
+          setLineError('');
         }}
         onSave={saveLineDraft}
       >
         {draftLine ? (
           <div className="grid gap-4">
+            {lineError ? (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                {lineError}
+              </div>
+            ) : null}
+            {isSavingLine ? (
+              <div className="rounded-xl border border-border bg-page p-3 text-xs text-secondaryText">
+                Saving line item to database...
+              </div>
+            ) : null}
             <FormField label="SKU Code" value={draftLine.sku} onChange={(value) => setDraftLine({ ...draftLine, sku: value })} />
             <FormField
               label="Description"

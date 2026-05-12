@@ -103,6 +103,7 @@ export async function GET() {
             }
           : null,
         ui: {
+          id: order.id,
           invoice: order.salesOrderNumber,
           date: formatDate(order.orderDate),
           shipDate: formatDate(order.shipDate),
@@ -113,6 +114,7 @@ export async function GET() {
           shipCost: order.shipCost === null ? '' : String(order.shipCost),
           salesRep: order.salesRep ?? '',
           items: order.items.map((item) => ({
+            id: item.id,
             sku: item.skuCode,
             description: item.productDescription,
             width: item.width ?? '',

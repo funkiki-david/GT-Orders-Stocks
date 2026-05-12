@@ -23,6 +23,7 @@ export type Customer = {
 };
 
 export type SalesOrderLineItem = {
+  id?: string;
   sku: string;
   description: string;
   width: string;
@@ -38,6 +39,7 @@ export type PaymentStatus = 'Unpaid' | 'Paid' | 'No Charge';
 export type CancelReason = 'Customer Cancelled' | 'Out of Stock' | 'Wrong Order' | 'Other' | '';
 
 export type SalesOrder = {
+  id?: string;
   invoice: string;
   date: string;
   shipDate: string;
