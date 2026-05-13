@@ -28,6 +28,29 @@ type StatusDraft = {
   statusNotes: string;
 };
 
+type CreateOrderLineDraft = {
+  sku: string;
+  description: string;
+  width: string;
+  length: string;
+  category: string;
+  qty: number;
+  unitPrice: number;
+};
+
+type CreateOrderDraft = {
+  invoice: string;
+  date: string;
+  shipDate: string;
+  customer: string;
+  po: string;
+  payment: string;
+  shipMethod: string;
+  shipCost: string;
+  salesRep: string;
+  items: CreateOrderLineDraft[];
+};
+
 type SalesOrdersResponse =
   | {
       ok: true;
@@ -69,6 +92,40 @@ function cancelReasonValue(value: CancelReason) {
   if (value === 'Wrong Order') return 'WRONG_ORDER';
   if (value === 'Other') return 'OTHER';
   return null;
+}
+
+function todayValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function createBlankLine(): CreateOrderLineDraft {
+  return {
+    sku: '',
+    description: '',
+    width: '',
+    length: '',
+    category: '',
+    qty: 1,
+    unitPrice: 0,
+  };
+}
+
+function createBlankOrder(): CreateOrderDraft {
+  const today = todayValue();
+  const compactDate = today.replaceAll('-', '');
+
+  return {
+    invoice: `GT-${compactDate}-NEW`,
+    date: today,
+    shipDate: '',
+    customer: '',
+    po: '',
+    payment: '',
+    shipMethod: '',
+    shipCost: '',
+    salesRep: '',
+    items: [createBlankLine()],
+  };
 }
 
 function normalizeOrder(order: SalesOrder): SalesOrder {
@@ -138,6 +195,9 @@ function SalesOrdersContent() {
   const [statusError, setStatusError] = useState('');
   const [isSavingLine, setIsSavingLine] = useState(false);
   const [lineError, setLineError] = useState('');
+  const [createDraft, setCreateDraft] = useState<CreateOrderDraft | null>(null);
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   const loadSalesOrders = useCallback(async (preferredInvoice?: string) => {
     setIsLoadingOrders(true);
@@ -330,6 +390,88 @@ function SalesOrdersContent() {
     }
   }
 
+  function openCreateDrawer() {
+    setCreateDraft(createBlankOrder());
+    setCreateError('');
+  }
+
+  function updateCreateLine(index: number, patch: Partial<CreateOrderLineDraft>) {
+    if (!createDraft) return;
+
+    setCreateDraft({
+      ...createDraft,
+      items: createDraft.items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
+    });
+  }
+
+  function addCreateLine() {
+    if (!createDraft) return;
+
+    setCreateDraft({
+      ...createDraft,
+      items: [...createDraft.items, createBlankLine()],
+    });
+  }
+
+  function removeCreateLine(index: number) {
+    if (!createDraft || createDraft.items.length === 1) return;
+
+    setCreateDraft({
+      ...createDraft,
+      items: createDraft.items.filter((_, itemIndex) => itemIndex !== index),
+    });
+  }
+
+  async function saveCreateDraft() {
+    if (!createDraft) return;
+
+    setIsCreatingOrder(true);
+    setCreateError('');
+
+    try {
+      const response = await fetch('/api/sales-orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          salesOrderNumber: createDraft.invoice,
+          orderDate: createDraft.date,
+          shipDate: createDraft.shipDate,
+          customerSnapshot: createDraft.customer,
+          poNumber: createDraft.po,
+          paymentInfo: createDraft.payment,
+          shipMethod: createDraft.shipMethod,
+          shipCost: createDraft.shipCost,
+          salesRep: createDraft.salesRep,
+          items: createDraft.items.map((item) => ({
+            skuCode: item.sku,
+            productDescription: item.description,
+            width: item.width,
+            length: item.length,
+            category: item.category,
+            qtyCtn: item.qty,
+            unitPrice: item.unitPrice,
+            total: Number(item.qty || 0) * Number(item.unitPrice || 0),
+          })),
+        }),
+      });
+      const result = (await response.json()) as MutationResponse;
+
+      if (!response.ok || !result.ok) {
+        throw new Error(result.ok ? 'Could not create sales order' : result.error);
+      }
+
+      await loadSalesOrders(createDraft.invoice);
+      setQuery(createDraft.invoice);
+      setCreateDraft(null);
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : 'Could not create sales order');
+    } finally {
+      setIsCreatingOrder(false);
+    }
+  }
+
   function handleSearch(value: string) {
     setQuery(value);
     const normalizedQuery = value.trim().toLowerCase();
@@ -393,7 +535,7 @@ function SalesOrdersContent() {
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <SearchBar value={query} onChange={handleSearch} placeholder="Search Sales Order / Customer / PO / Status / SKU" />
-        <Button variant="primary" onClick={() => undefined}>Create Sales Order</Button>
+        <Button variant="primary" onClick={openCreateDrawer}>Create Sales Order</Button>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[460px_1fr]">
@@ -544,6 +686,99 @@ function SalesOrdersContent() {
 
             <div className="rounded-xl bg-warningBg p-3 text-xs text-warningText">
               Sample requests and quality issue no-charge orders can use Fulfillment: Billed Closed and Payment: No Charge, with details in Status Notes.
+            </div>
+          </div>
+        ) : null}
+      </Drawer>
+
+      <Drawer
+        title="Create Sales Order"
+        helper="Create the Sales Order and line items in PostgreSQL. Inventory is not deducted in this v1 flow."
+        open={Boolean(createDraft)}
+        onClose={() => {
+          if (isCreatingOrder) return;
+          setCreateDraft(null);
+          setCreateError('');
+        }}
+        onSave={saveCreateDraft}
+      >
+        {createDraft ? (
+          <div className="grid gap-4">
+            {createError ? (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                {createError}
+              </div>
+            ) : null}
+            {isCreatingOrder ? (
+              <div className="rounded-xl border border-border bg-page p-3 text-xs text-secondaryText">
+                Creating sales order in database...
+              </div>
+            ) : null}
+
+            <FormField label="Sales Order # *" value={createDraft.invoice} onChange={(value) => setCreateDraft({ ...createDraft, invoice: value })} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormField label="Order Date" type="date" value={createDraft.date} onChange={(value) => setCreateDraft({ ...createDraft, date: value })} />
+              <FormField label="Ship Date" type="date" value={createDraft.shipDate} onChange={(value) => setCreateDraft({ ...createDraft, shipDate: value })} />
+            </div>
+            <FormField label="Customer *" value={createDraft.customer} onChange={(value) => setCreateDraft({ ...createDraft, customer: value })} />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormField label="PO #" value={createDraft.po} onChange={(value) => setCreateDraft({ ...createDraft, po: value })} />
+              <FormField label="Sales Rep" value={createDraft.salesRep} onChange={(value) => setCreateDraft({ ...createDraft, salesRep: value })} />
+              <FormField label="Payment Info" value={createDraft.payment} onChange={(value) => setCreateDraft({ ...createDraft, payment: value })} />
+              <FormField label="Ship Method" value={createDraft.shipMethod} onChange={(value) => setCreateDraft({ ...createDraft, shipMethod: value })} />
+              <FormField label="Ship Cost" type="number" value={createDraft.shipCost} onChange={(value) => setCreateDraft({ ...createDraft, shipCost: value })} />
+            </div>
+
+            <div className="flex items-center justify-between border-t border-border pt-4">
+              <div className="font-title text-base font-semibold text-primaryText">Line Items</div>
+              <Button variant="secondary" size="small" onClick={addCreateLine}>Add Line</Button>
+            </div>
+
+            {createDraft.items.map((item, index) => (
+              <div key={index} className="grid gap-3 rounded-xl border border-border bg-page p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold text-primaryText">Line {index + 1}</div>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    disabled={createDraft.items.length === 1}
+                    onClick={() => removeCreateLine(index)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                <FormField label="SKU Code *" value={item.sku} onChange={(value) => updateCreateLine(index, { sku: value })} />
+                <FormField
+                  label="Description *"
+                  value={item.description}
+                  onChange={(value) => updateCreateLine(index, { description: value })}
+                  multiline
+                />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField label="Width" value={item.width} onChange={(value) => updateCreateLine(index, { width: value })} />
+                  <FormField label="Length" value={item.length} onChange={(value) => updateCreateLine(index, { length: value })} />
+                  <FormField label="Category" value={item.category} onChange={(value) => updateCreateLine(index, { category: value })} />
+                  <FormField
+                    label="Qty (CTN)"
+                    type="number"
+                    value={item.qty}
+                    onChange={(value) => updateCreateLine(index, { qty: Number(value) })}
+                  />
+                  <FormField
+                    label="Unit Price"
+                    type="number"
+                    value={item.unitPrice}
+                    onChange={(value) => updateCreateLine(index, { unitPrice: Number(value) })}
+                  />
+                </div>
+                <div className="rounded-xl bg-white p-3 text-sm text-primaryText">
+                  Line Total: {formatCurrency(Number(item.qty || 0) * Number(item.unitPrice || 0))}
+                </div>
+              </div>
+            ))}
+
+            <div className="rounded-xl bg-warningBg p-3 text-xs text-warningText">
+              Required fields are Sales Order #, Customer, SKU Code, Description, Qty, and Unit Price. Product master data is not changed by this form.
             </div>
           </div>
         ) : null}

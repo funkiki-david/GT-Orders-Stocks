@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -26,6 +26,68 @@ function cancelReasonLabel(value: string | null) {
   if (value === 'WRONG_ORDER') return 'Wrong Order';
   if (value === 'OTHER') return 'Other';
   return '';
+}
+
+function optionalString(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function requiredString(value: unknown) {
+  const trimmed = optionalString(value);
+
+  if (!trimmed) {
+    throw new Error('Required text value is missing.');
+  }
+
+  return trimmed;
+}
+
+function optionalDate(value: unknown) {
+  const trimmed = optionalString(value);
+
+  if (!trimmed) return null;
+
+  const date = new Date(`${trimmed}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Invalid date value.');
+  }
+
+  return date;
+}
+
+function optionalNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return null;
+
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    throw new Error('Invalid number value.');
+  }
+
+  return number;
+}
+
+function requiredNumber(value: unknown) {
+  const number = optionalNumber(value);
+
+  if (number === null) {
+    throw new Error('Required number value is missing.');
+  }
+
+  return number;
+}
+
+function paymentStatusFromInfo(value: string | null) {
+  const normalized = value?.trim().toLowerCase() ?? '';
+
+  if (normalized === 'no charge' || normalized === 'no-charge' || normalized === 'no_charge') return 'NO_CHARGE';
+  if (normalized.includes('paid') && !normalized.includes('unpaid')) return 'PAID';
+
+  return 'UNPAID';
 }
 
 export async function GET() {
@@ -147,6 +209,132 @@ export async function GET() {
         error: 'Failed to load sales orders',
       },
       { status: 500 },
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = (await request.json()) as {
+      salesOrderNumber?: unknown;
+      orderDate?: unknown;
+      shipDate?: unknown;
+      customerId?: unknown;
+      customerSnapshot?: unknown;
+      poNumber?: unknown;
+      paymentInfo?: unknown;
+      shipMethod?: unknown;
+      shipCost?: unknown;
+      salesRep?: unknown;
+      items?: Array<{
+        skuCode?: unknown;
+        productDescription?: unknown;
+        width?: unknown;
+        length?: unknown;
+        category?: unknown;
+        qtyCtn?: unknown;
+        unitPrice?: unknown;
+        total?: unknown;
+        palletLocationSnapshot?: unknown;
+      }>;
+    };
+
+    const salesOrderNumber = requiredString(body.salesOrderNumber);
+    const customerSnapshot = requiredString(body.customerSnapshot);
+    const items = Array.isArray(body.items) ? body.items : [];
+
+    if (items.length === 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'At least one line item is required',
+        },
+        { status: 400 },
+      );
+    }
+
+    const preparedItems = items.map((item) => {
+      const skuCode = requiredString(item.skuCode);
+      const productDescription = requiredString(item.productDescription);
+      const qtyCtn = Math.trunc(requiredNumber(item.qtyCtn));
+      const unitPrice = requiredNumber(item.unitPrice);
+      const providedTotal = optionalNumber(item.total);
+      const total = providedTotal ?? qtyCtn * unitPrice;
+
+      if (qtyCtn < 0 || unitPrice < 0 || total < 0) {
+        throw new Error('Line item numbers cannot be negative.');
+      }
+
+      return {
+        skuCode,
+        productDescription,
+        width: optionalString(item.width),
+        length: optionalString(item.length),
+        category: optionalString(item.category),
+        qtyCtn,
+        unitPrice,
+        total,
+        palletLocationSnapshot: optionalString(item.palletLocationSnapshot),
+      };
+    });
+
+    const totalQty = preparedItems.reduce((sum, item) => sum + item.qtyCtn, 0);
+    const subtotal = preparedItems.reduce((sum, item) => sum + item.total, 0);
+    const providedCustomerId = optionalString(body.customerId);
+    const matchedCustomer =
+      providedCustomerId === null
+        ? await prisma.customer.findUnique({
+            where: {
+              companyName: customerSnapshot,
+            },
+          })
+        : null;
+    const customerId = providedCustomerId ?? matchedCustomer?.id ?? null;
+    const paymentInfo = optionalString(body.paymentInfo);
+
+    const salesOrder = await prisma.salesOrder.create({
+      data: {
+        salesOrderNumber,
+        orderDate: optionalDate(body.orderDate),
+        shipDate: optionalDate(body.shipDate),
+        customerId,
+        customerSnapshot,
+        poNumber: optionalString(body.poNumber),
+        paymentInfo,
+        shipMethod: optionalString(body.shipMethod),
+        shipCost: optionalNumber(body.shipCost),
+        salesRep: optionalString(body.salesRep),
+        fulfillmentStatus: 'OPEN',
+        paymentStatus: paymentStatusFromInfo(paymentInfo),
+        subtotal,
+        totalQty,
+        items: {
+          create: preparedItems,
+        },
+      },
+      include: {
+        customer: true,
+        items: {
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      data: salesOrder,
+    });
+  } catch (error) {
+    console.error('Failed to create sales order', error);
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'Failed to create sales order',
+      },
+      { status: error instanceof Error ? 400 : 500 },
     );
   }
 }
