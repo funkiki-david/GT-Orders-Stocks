@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState, type ReactNode } from 'react';
+import { AUTH_COOKIE } from '@/lib/auth';
+import { Button } from './Button';
 
 const navItems = [
   { href: '/inventory', label: 'Inventory' },
@@ -16,6 +18,23 @@ type AppShellProps = {
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [role, setRole] = useState('');
+
+  useEffect(() => {
+    const roleCookie = document.cookie
+      .split('; ')
+      .find((cookie) => cookie.startsWith(`${AUTH_COOKIE}=`));
+    setRole(roleCookie ? decodeURIComponent(roleCookie.split('=')[1]) : '');
+  }, []);
+
+  async function handleLogout() {
+    await fetch('/api/logout', {
+      method: 'POST',
+    });
+    router.replace('/login');
+    router.refresh();
+  }
 
   return (
     <div className="min-h-screen bg-page text-primaryText">
@@ -25,7 +44,12 @@ export function AppShell({ children }: AppShellProps) {
             <div className="font-title text-[22px] font-semibold text-primaryText">
               GT Orders & Stocks <span className="font-body text-xs font-normal text-helperText">front-end MVP</span>
             </div>
-            <div className="rounded-full bg-successBg px-3 py-1.5 text-xs text-successText">Local seed data only</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="rounded-full bg-successBg px-3 py-1.5 text-xs text-successText">
+                {role ? `Role: ${role}` : 'Role loading'}
+              </div>
+              <Button size="small" onClick={handleLogout}>Logout</Button>
+            </div>
           </div>
           <nav className="flex gap-1" aria-label="Main navigation">
             {navItems.map((item) => {
