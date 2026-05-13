@@ -38,7 +38,11 @@ export function SalesOrderDetail({ order, onEditLine, onUpdateStatus }: SalesOrd
       <div className="mb-3 rounded-lg border border-border bg-page px-3 py-2 text-xs text-secondaryText">
         <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
           <div className="font-medium text-primaryText">Order Status</div>
-          {onUpdateStatus ? <Button size="small" onClick={() => onUpdateStatus(order)}>Update Status</Button> : null}
+          {onUpdateStatus ? (
+            <Button variant="primary" size="small" onClick={() => onUpdateStatus(order)}>
+              Update Status
+            </Button>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1">
           <span>Fulfillment: <StatusText kind="fulfillment" value={fulfillmentStatus} /></span>

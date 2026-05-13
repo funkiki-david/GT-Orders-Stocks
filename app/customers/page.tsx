@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { Button } from '@/components/Button';
@@ -142,6 +143,7 @@ function sortCustomers(customers: Customer[], sortKey: CustomerSortKey) {
 }
 
 export default function CustomersPage() {
+  const router = useRouter();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [query, setQuery] = useState('');
@@ -307,6 +309,11 @@ export default function CustomersPage() {
     setDraftLine({ ...line });
   }
 
+  function openSalesOrder(order: SalesOrder) {
+    setSelectedInvoice(order.invoice);
+    router.push(`/sales-orders?salesOrder=${encodeURIComponent(order.invoice)}`);
+  }
+
   function saveLineDraft() {
     if (!draftLine || !editingLine || !selectedOrder) return;
 
@@ -435,6 +442,7 @@ export default function CustomersPage() {
             orders={selectedCustomerOrders}
             selectedOrder={selectedOrder}
             onSelectOrder={(order) => setSelectedInvoice(order.invoice)}
+            onOpenOrder={openSalesOrder}
             onEditCustomer={openEditCustomerDrawer}
             onEditPayment={openPaymentDrawer}
             onEditLine={openLineDrawer}
@@ -518,6 +526,7 @@ function CustomerDetailPanel({
   orders,
   selectedOrder,
   onSelectOrder,
+  onOpenOrder,
   onEditCustomer,
   onEditPayment,
   onEditLine,
@@ -526,6 +535,7 @@ function CustomerDetailPanel({
   orders: SalesOrder[];
   selectedOrder?: SalesOrder;
   onSelectOrder: (order: SalesOrder) => void;
+  onOpenOrder: (order: SalesOrder) => void;
   onEditCustomer: (customer: Customer) => void;
   onEditPayment: (order: SalesOrder) => void;
   onEditLine: (line: SalesOrderLineItem) => void;
@@ -580,7 +590,12 @@ function CustomerDetailPanel({
 
       <div className="mb-3">
         <div className="mb-1.5 font-title text-[15px] font-semibold text-primaryText">Orders from this Customer</div>
-        <CompactOrdersTable orders={orders} selectedOrder={selectedOrder} onSelectOrder={onSelectOrder} />
+        <CompactOrdersTable
+          orders={orders}
+          selectedOrder={selectedOrder}
+          onSelectOrder={onSelectOrder}
+          onOpenOrder={onOpenOrder}
+        />
       </div>
 
       <SelectedCustomerOrderDetail order={selectedOrder} onEditPayment={onEditPayment} onEditLine={onEditLine} />
@@ -592,10 +607,12 @@ function CompactOrdersTable({
   orders,
   selectedOrder,
   onSelectOrder,
+  onOpenOrder,
 }: {
   orders: SalesOrder[];
   selectedOrder?: SalesOrder;
   onSelectOrder: (order: SalesOrder) => void;
+  onOpenOrder: (order: SalesOrder) => void;
 }) {
   if (orders.length === 0) {
     return <div className="rounded-lg border border-border bg-card p-3 text-xs text-secondaryText">No orders found for this customer.</div>;
@@ -621,8 +638,21 @@ function CompactOrdersTable({
             return (
               <tr
                 key={order.invoice}
-                onClick={() => onSelectOrder(order)}
-                className={`cursor-pointer hover:bg-page ${isSelected ? 'bg-page font-semibold' : ''}`}
+                role="link"
+                tabIndex={0}
+                title={`Open ${order.invoice} in Sales Order`}
+                onMouseEnter={() => onSelectOrder(order)}
+                onFocus={() => onSelectOrder(order)}
+                onClick={() => onOpenOrder(order)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onOpenOrder(order);
+                  }
+                }}
+                className={`cursor-pointer transition hover:bg-warningBg ${
+                  isSelected ? 'bg-warningBg font-semibold' : ''
+                }`}
               >
                 <td className="border-b border-border px-2 py-2 text-primaryText">{order.invoice}</td>
                 <td className="border-b border-border px-2 py-2 text-primaryText">{order.date}</td>
