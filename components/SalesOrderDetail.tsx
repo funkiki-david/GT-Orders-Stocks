@@ -32,11 +32,6 @@ export function SalesOrderDetail({ order, onAddLine, onEditLine, onUpdateStatus 
         <div>
           <h2 className="font-title text-[15px] font-semibold text-primaryText">Selected Sales Order</h2>
         </div>
-        {onAddLine ? (
-          <Button variant="primary" size="small" onClick={() => onAddLine(order)}>
-            Add Item
-          </Button>
-        ) : null}
       </div>
 
       <div className="mb-3 rounded-lg border border-border bg-page px-3 py-2 text-xs text-secondaryText">
@@ -89,6 +84,14 @@ export function SalesOrderDetail({ order, onAddLine, onEditLine, onUpdateStatus 
           },
         ]}
       />
+
+      {onAddLine ? (
+        <div className="mt-3 flex justify-end">
+          <Button size="small" onClick={() => onAddLine(order)}>
+            Add Item
+          </Button>
+        </div>
+      ) : null}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-page px-3 py-2">
         <div className="text-xs text-secondaryText">Total Qty (CTN): <span className="text-primaryText">{order.totalQty}</span></div>
