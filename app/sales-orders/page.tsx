@@ -292,6 +292,78 @@ function SalesOrdersLoading() {
   );
 }
 
+type SuggestionOption = {
+  key: string;
+  value: string;
+  title: string;
+  detail?: string;
+};
+
+function SuggestionField({
+  label,
+  value,
+  onChange,
+  onSelect,
+  options,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onSelect: (value: string) => void;
+  options: SuggestionOption[];
+  placeholder?: string;
+}) {
+  const [isFocused, setIsFocused] = useState(false);
+  const normalizedValue = value.trim().toLowerCase();
+  const matchedOptions = normalizedValue
+    ? options
+        .filter((option) =>
+          [option.value, option.title, option.detail ?? '']
+            .join(' ')
+            .toLowerCase()
+            .includes(normalizedValue),
+        )
+        .slice(0, 8)
+    : [];
+  const shouldShowOptions = isFocused && matchedOptions.length > 0;
+
+  return (
+    <label className="relative block">
+      <span className="mb-1.5 block text-[13px] font-medium text-primaryText">{label}</span>
+      <input
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        autoComplete="off"
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => window.setTimeout(() => setIsFocused(false), 120)}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-[34px] w-full rounded-md border border-border bg-white px-3 text-sm text-primaryText"
+      />
+      {shouldShowOptions ? (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-60 overflow-auto rounded-lg border border-border bg-white shadow-lg">
+          {matchedOptions.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onSelect(option.value);
+                setIsFocused(false);
+              }}
+              className="block w-full border-b border-border px-3 py-2 text-left text-sm text-primaryText last:border-b-0 hover:bg-page"
+            >
+              <span className="block font-semibold">{option.title}</span>
+              {option.detail ? <span className="block text-xs text-secondaryText">{option.detail}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </label>
+  );
+}
+
 function SalesOrdersContent() {
   const searchParams = useSearchParams();
   const [orders, setOrders] = useState<SalesOrder[]>([]);
@@ -828,25 +900,6 @@ function SalesOrdersContent() {
         </div>
       ) : null}
 
-      <datalist id="customer-suggestions">
-        {customerSuggestions.map((customer) => (
-          <option key={customer.companyName} value={customer.companyName}>
-            {customer.paymentTerm ? `${customer.companyName} - ${customer.paymentTerm}` : customer.companyName}
-          </option>
-        ))}
-      </datalist>
-
-      <datalist id="product-suggestions">
-        <option value="SHIPPING">Shipping charge</option>
-        {productSuggestions.map((product) => (
-          <option key={product.skuCode} value={product.skuCode}>
-            {product.availableQty === undefined
-              ? product.productName
-              : `${product.productName} - available ${product.availableQty}`}
-          </option>
-        ))}
-      </datalist>
-
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card p-2.5 text-xs text-secondaryText">
         <span>
           Shared data syncs automatically every 15 seconds.
@@ -1067,12 +1120,18 @@ function SalesOrdersContent() {
               <FormField label="Order Date" type="date" value={createDraft.date} onChange={updateCreateOrderDate} />
               <FormField label="Ship Date" type="date" value={createDraft.shipDate} onChange={(value) => setCreateDraft({ ...createDraft, shipDate: value })} />
             </div>
-            <FormField
+            <SuggestionField
               label="Customer *"
               value={createDraft.customer}
-              list="customer-suggestions"
               placeholder="Start typing a customer name"
               onChange={updateCreateCustomer}
+              options={customerSuggestions.map((customer) => ({
+                key: customer.companyName,
+                value: customer.companyName,
+                title: customer.companyName,
+                detail: customer.paymentTerm ? `Payment: ${customer.paymentTerm}` : 'Customer record',
+              }))}
+              onSelect={(value) => updateCreateCustomer(value)}
             />
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField label="PO #" value={createDraft.po} onChange={(value) => setCreateDraft({ ...createDraft, po: value })} />
@@ -1102,12 +1161,29 @@ function SalesOrdersContent() {
                     Remove
                   </Button>
                 </div>
-                <FormField
+                <SuggestionField
                   label="SKU Code *"
                   value={item.sku}
                   placeholder="SKU code or SHIPPING"
-                  list="product-suggestions"
                   onChange={(value) => updateCreateLineSku(index, value)}
+                  options={[
+                    {
+                      key: 'SHIPPING',
+                      value: 'SHIPPING',
+                      title: 'SHIPPING',
+                      detail: 'Shipping charge line',
+                    },
+                    ...productSuggestions.map((product) => ({
+                      key: product.skuCode,
+                      value: product.skuCode,
+                      title: product.skuCode,
+                      detail:
+                        product.availableQty === undefined
+                          ? product.productName
+                          : `${product.productName} - available ${product.availableQty}`,
+                    })),
+                  ]}
+                  onSelect={(value) => updateCreateLineSku(index, value)}
                 />
                 <FormField
                   label="Description *"
@@ -1187,12 +1263,29 @@ function SalesOrdersContent() {
                 Saving line item to database...
               </div>
             ) : null}
-            <FormField
+            <SuggestionField
               label="SKU Code"
               value={draftLine.sku}
               placeholder={lineDrawerMode === 'add' ? 'SKU code or SHIPPING' : undefined}
-              list="product-suggestions"
               onChange={updateDraftLineSku}
+              options={[
+                {
+                  key: 'SHIPPING',
+                  value: 'SHIPPING',
+                  title: 'SHIPPING',
+                  detail: 'Shipping charge line',
+                },
+                ...productSuggestions.map((product) => ({
+                  key: product.skuCode,
+                  value: product.skuCode,
+                  title: product.skuCode,
+                  detail:
+                    product.availableQty === undefined
+                      ? product.productName
+                      : `${product.productName} - available ${product.availableQty}`,
+                })),
+              ]}
+              onSelect={updateDraftLineSku}
             />
             <FormField
               label="Description"
