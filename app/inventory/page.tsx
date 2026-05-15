@@ -9,7 +9,16 @@ import { PageHeader } from '@/components/PageHeader';
 import { SearchBar } from '@/components/SearchBar';
 import type { InventoryItem } from '@/lib/types';
 
-type InventorySortKey = 'sku-asc' | 'sku-desc' | 'description-asc' | 'description-desc' | 'qty-desc' | 'qty-asc' | 'category-asc';
+type InventorySortKey =
+  | 'sku-asc'
+  | 'sku-desc'
+  | 'description-asc'
+  | 'description-desc'
+  | 'qty-desc'
+  | 'qty-asc'
+  | 'reserved-desc'
+  | 'available-asc'
+  | 'category-asc';
 
 type ProductRecord = {
   id: string;
@@ -17,6 +26,8 @@ type ProductRecord = {
   productName: string;
   category: string | null;
   qtyCtn: number;
+  reservedQty: number;
+  availableQty: number;
   palletLocation: string | null;
   sellingPrice: string | number | null;
 };
@@ -43,6 +54,8 @@ type ProductMutationResponse =
 
 type InventoryProductItem = InventoryItem & {
   id: string;
+  reservedQty: number;
+  availableQty: number;
 };
 
 type EditingActivity = {
@@ -63,11 +76,13 @@ function productToInventoryItem(product: ProductRecord): InventoryProductItem {
     name: product.productName,
     category: product.category ?? '',
     qty: product.qtyCtn,
+    reservedQty: product.reservedQty ?? 0,
+    availableQty: product.availableQty ?? product.qtyCtn,
     palletLocation: product.palletLocation ?? '',
   };
 }
 
-function sortInventory<T extends InventoryItem>(items: T[], sortKey: InventorySortKey) {
+function sortInventory<T extends InventoryProductItem>(items: T[], sortKey: InventorySortKey) {
   const sorted = [...items];
 
   sorted.sort((a, b) => {
@@ -84,6 +99,10 @@ function sortInventory<T extends InventoryItem>(items: T[], sortKey: InventorySo
         return Number(b.qty || 0) - Number(a.qty || 0);
       case 'qty-asc':
         return Number(a.qty || 0) - Number(b.qty || 0);
+      case 'reserved-desc':
+        return Number(b.reservedQty || 0) - Number(a.reservedQty || 0);
+      case 'available-asc':
+        return Number(a.availableQty || 0) - Number(b.availableQty || 0);
       case 'category-asc':
         return a.category.localeCompare(b.category);
       default:
@@ -114,7 +133,7 @@ function describeProductChanges(previousItem: InventoryProductItem | null, nextI
     ['SKU Code', previousItem.sku, nextItem.sku],
     ['Product Description', previousItem.name, nextItem.name],
     ['Category', previousItem.category || 'Not set', nextItem.category || 'Not set'],
-    ['Total Qty (CTN)', String(previousItem.qty), String(nextItem.qty)],
+    ['On Hand (CTN)', String(previousItem.qty), String(nextItem.qty)],
     ['Pallet Location', previousItem.palletLocation || 'Not set', nextItem.palletLocation || 'Not set'],
   ]
     .filter(([, before, after]) => before !== after)
@@ -136,9 +155,12 @@ export default function InventoryPage() {
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [currentRole, setCurrentRole] = useState('Unknown user');
   const [editingActivities, setEditingActivities] = useState<EditingActivity[]>([]);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  const loadProducts = useCallback(async (preferredSku?: string) => {
-    setIsLoadingProducts(true);
+  const loadProducts = useCallback(async (preferredSku?: string, { showLoading = true }: { showLoading?: boolean } = {}) => {
+    if (showLoading) {
+      setIsLoadingProducts(true);
+    }
     setProductsError('');
 
     try {
@@ -154,6 +176,7 @@ export default function InventoryPage() {
       const nextItems = result.data.map((product) => productToInventoryItem(product));
 
       setItems(nextItems);
+      setLastSyncedAt(new Date());
       setSelectedSku((current) => {
         const nextSelection = preferredSku ?? current;
         if (nextSelection && nextItems.some((item) => item.sku === nextSelection)) {
@@ -163,7 +186,9 @@ export default function InventoryPage() {
         return nextItems[0]?.sku ?? '';
       });
     } finally {
-      setIsLoadingProducts(false);
+      if (showLoading) {
+        setIsLoadingProducts(false);
+      }
     }
   }, []);
 
@@ -193,6 +218,30 @@ export default function InventoryPage() {
     setCurrentRole(readCurrentRole());
   }, []);
 
+  useEffect(() => {
+    async function refreshProducts() {
+      if (document.visibilityState !== 'visible' || draft) return;
+      await loadProducts(selectedSku, { showLoading: false });
+    }
+
+    function queueRefreshProducts() {
+      refreshProducts().catch((error) => {
+        setProductsError(error instanceof Error ? error.message : 'Failed to refresh products');
+      });
+    }
+
+    const interval = window.setInterval(queueRefreshProducts, 15000);
+
+    window.addEventListener('focus', queueRefreshProducts);
+    document.addEventListener('visibilitychange', queueRefreshProducts);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', queueRefreshProducts);
+      document.removeEventListener('visibilitychange', queueRefreshProducts);
+    };
+  }, [draft, loadProducts, selectedSku]);
+
   const filteredItems = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     const matchedItems = normalizedQuery
@@ -209,10 +258,12 @@ export default function InventoryPage() {
 
   const selectedItem = filteredItems.find((item) => item.sku === selectedSku) ?? filteredItems[0];
   const totalQty = filteredItems.reduce((sum, item) => sum + Number(item.qty || 0), 0);
+  const totalReservedQty = filteredItems.reduce((sum, item) => sum + Number(item.reservedQty || 0), 0);
+  const totalAvailableQty = filteredItems.reduce((sum, item) => sum + Number(item.availableQty || 0), 0);
   const standardCount = filteredItems.filter((item) => item.category === 'Standard').length;
   const palletLocationCount = filteredItems.filter((item) => item.palletLocation?.trim()).length;
 
-  function selectItem(item: InventoryItem) {
+  function selectItem(item: InventoryProductItem) {
     setSelectedSku(item.sku);
   }
 
@@ -254,6 +305,8 @@ export default function InventoryPage() {
       category: 'Standard',
       qty: 0,
       palletLocation: '',
+      reservedQty: 0,
+      availableQty: 0,
     };
     setEditingItem(null);
     setDraft(blankItem);
@@ -318,7 +371,7 @@ export default function InventoryPage() {
       <PageHeader title="Inventory" instruction="Step 1: select a SKU from the left. Step 2: review or edit SKU details on the right." />
 
       <div className="mb-3 rounded-xl border border-border bg-card p-2.5 text-xs text-secondaryText">
-        Product records load from PostgreSQL. Add and edit actions save to the database.
+        Product records load from PostgreSQL. Reserved and Available are calculated from active Sales Orders.
       </div>
 
       {isLoadingProducts ? (
@@ -333,10 +386,22 @@ export default function InventoryPage() {
         </div>
       ) : null}
 
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card p-2.5 text-xs text-secondaryText">
+        <span>
+          Inventory availability syncs automatically every 15 seconds.
+          {lastSyncedAt ? ` Last synced ${lastSyncedAt.toLocaleTimeString()}.` : ''}
+        </span>
+        <Button size="small" onClick={() => loadProducts(selectedSku, { showLoading: false })}>
+          Sync Now
+        </Button>
+      </div>
+
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-3 py-2">
         <div className="flex flex-wrap gap-4 text-[13px] text-primaryText">
           <span><strong>{filteredItems.length}</strong> SKU Records</span>
-          <span><strong>{totalQty.toLocaleString()}</strong> Total Qty (CTN)</span>
+          <span><strong>{totalQty.toLocaleString()}</strong> On Hand (CTN)</span>
+          <span><strong>{totalReservedQty.toLocaleString()}</strong> Reserved</span>
+          <span><strong>{totalAvailableQty.toLocaleString()}</strong> Available</span>
           <span><strong>{standardCount}</strong> Standard</span>
           <span><strong>{palletLocationCount}</strong> Locations Set</span>
         </div>
@@ -369,6 +434,8 @@ export default function InventoryPage() {
                 <option value="description-desc">Description: Z-A</option>
                 <option value="qty-desc">Qty: High</option>
                 <option value="qty-asc">Qty: Low</option>
+                <option value="reserved-desc">Reserved: High</option>
+                <option value="available-asc">Available: Low</option>
                 <option value="category-asc">Category: A-Z</option>
               </select>
             </div>
@@ -378,9 +445,11 @@ export default function InventoryPage() {
             <table className="w-full border-collapse text-[13px]">
               <thead className="bg-header">
                 <tr>
-                  <th className="h-9 w-[42%] border-b border-border px-2 text-left font-semibold text-primaryText">SKU</th>
-                  <th className="h-9 w-[34%] border-b border-border px-2 text-left font-semibold text-primaryText">Category</th>
-                  <th className="h-9 w-[24%] border-b border-border px-2 text-center font-semibold text-primaryText">Qty</th>
+                  <th className="h-9 w-[34%] border-b border-border px-2 text-left font-semibold text-primaryText">SKU</th>
+                  <th className="h-9 w-[24%] border-b border-border px-2 text-left font-semibold text-primaryText">Category</th>
+                  <th className="h-9 w-[14%] border-b border-border px-2 text-center font-semibold text-primaryText">On Hand</th>
+                  <th className="h-9 w-[14%] border-b border-border px-2 text-center font-semibold text-primaryText">Reserved</th>
+                  <th className="h-9 w-[14%] border-b border-border px-2 text-center font-semibold text-primaryText">Available</th>
                 </tr>
               </thead>
               <tbody>
@@ -396,12 +465,16 @@ export default function InventoryPage() {
                       <td className="border-b border-border px-2 py-2 text-primaryText">{item.sku}</td>
                       <td className="border-b border-border px-2 py-2 text-primaryText">{item.category}</td>
                       <td className="border-b border-border px-2 py-2 text-center text-primaryText">{item.qty}</td>
+                      <td className="border-b border-border px-2 py-2 text-center text-primaryText">{item.reservedQty}</td>
+                      <td className={`border-b border-border px-2 py-2 text-center ${item.availableQty < 0 ? 'text-red-700' : 'text-primaryText'}`}>
+                        {item.availableQty}
+                      </td>
                     </tr>
                   );
                 })}
                 {!isLoadingProducts && !productsError && filteredItems.length === 0 ? (
                   <tr>
-                    <td className="border-b border-border px-2 py-4 text-center text-secondaryText" colSpan={3}>
+                    <td className="border-b border-border px-2 py-4 text-center text-secondaryText" colSpan={5}>
                       No product records found.
                     </td>
                   </tr>
@@ -475,7 +548,7 @@ export default function InventoryPage() {
               onChange={(value) => setDraft({ ...draft, palletLocation: value })}
             />
             <div className="rounded-xl bg-warningBg p-3 text-xs text-warningText">
-              Product changes save to PostgreSQL. Sales order snapshots are not changed by product edits.
+              Product changes save to PostgreSQL. Reserved and Available are calculated from active Sales Orders.
             </div>
           </div>
         ) : null}
@@ -507,15 +580,29 @@ function InventoryDetailPanel({
       <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="font-title text-[15px] font-semibold text-primaryText">{item.sku}</h2>
-          <p className="mt-0.5 text-xs text-helperText">SKU master data, inventory quantity, and pallet location.</p>
+          <p className="mt-0.5 text-xs text-helperText">SKU master data, active Sales Order reservations, and pallet location.</p>
         </div>
         <Button onClick={() => onEditItem(item)}>Edit SKU</Button>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-border bg-page px-3 py-1.5 text-xs text-secondaryText">
-        <span>Qty: {item.qty}</span>
+        <span>On Hand: {item.qty}</span>
+        <span>Reserved: {item.reservedQty}</span>
+        <span>Available: {item.availableQty}</span>
         <span>Category: {item.category || '—'}</span>
         <span>Pallet Location: {item.palletLocation || 'Not set'}</span>
+      </div>
+
+      <div className="mb-3 rounded-lg border border-border bg-page p-3">
+        <div className="mb-2 font-title text-[15px] font-semibold text-primaryText">Stock Availability</div>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+          <ReadOnlyField label="On Hand (CTN)" value={String(item.qty)} />
+          <ReadOnlyField label="Reserved (CTN)" value={String(item.reservedQty)} />
+          <ReadOnlyField label="Available (CTN)" value={String(item.availableQty)} />
+        </div>
+        <p className="mt-2 text-xs text-secondaryText">
+          Reserved is calculated from Open and Shipped Sales Orders for this SKU. Cancelled and Billed Closed orders are excluded.
+        </p>
       </div>
 
       <div className="mb-3 rounded-lg border border-border bg-page p-3">
@@ -524,7 +611,7 @@ function InventoryDetailPanel({
           <ReadOnlyField label="SKU Code" value={item.sku} />
           <ReadOnlyField label="Category" value={item.category || 'Not set'} />
           <ReadOnlyField label="Product Description" value={item.name} />
-          <ReadOnlyField label="Total Qty (CTN)" value={String(item.qty)} />
+          <ReadOnlyField label="On Hand (CTN)" value={String(item.qty)} />
           <ReadOnlyField label="Pallet Location" value={item.palletLocation || 'Not set'} />
           <ReadOnlyField label="Selling Price" value="Not set" />
         </div>

@@ -56,10 +56,35 @@ export async function GET() {
         skuCode: 'asc',
       },
     });
+    const reservedBySku = await prisma.salesOrderItem.groupBy({
+      by: ['skuCode'],
+      where: {
+        salesOrder: {
+          fulfillmentStatus: {
+            in: ['OPEN', 'SHIPPED'],
+          },
+        },
+      },
+      _sum: {
+        qtyCtn: true,
+      },
+    });
+    const reservedQtyBySku = new Map(
+      reservedBySku.map((item) => [item.skuCode, item._sum.qtyCtn ?? 0]),
+    );
+    const productsWithAvailability = products.map((product) => {
+      const reservedQty = reservedQtyBySku.get(product.skuCode) ?? 0;
+
+      return {
+        ...product,
+        reservedQty,
+        availableQty: product.qtyCtn - reservedQty,
+      };
+    });
 
     return NextResponse.json({
       ok: true,
-      data: products,
+      data: productsWithAvailability,
     });
   } catch (error) {
     console.error('Failed to load products', error);
